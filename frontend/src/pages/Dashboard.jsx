@@ -211,8 +211,7 @@ export default function Dashboard() {
                   <div key={i} className="signal-bar" style={{ height: h }} />
                 ))}
               </div>
-              <GlitchLoader length={8} speed={80} />
-              <span className="signal-no">No Signal</span>
+              <span className="signal-no">No Activity</span>
             </div>
           )}
         </div>
