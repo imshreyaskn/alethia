@@ -1,0 +1,285 @@
+# Product Description: **Realive**
+
+### *An AI-Assisted Platform for Automated CI/CD Test Repair (Python-First)*
+
+---
+
+## 1. Problem Statement
+
+When application code evolves — a new field added to an API response, a database column renamed, a function signature refactored — the *application logic* is correct, but existing test assertions break. They reference outdated schemas, stale mock data, and old return shapes.
+
+This is not a bug. It's maintenance debt.
+
+Engineers then context-switch out of feature work, open CI logs, trace the failure back to a specific test file, understand what changed upstream, and manually rewrite assertions and fixtures. For teams running hundreds of test cases across multiple services, this cycle is a recurring, low-value time drain that interrupts flow and delays merges.
+
+**Realive** targets this specific problem: when a CI pipeline fails due to a **test-level mismatch** (not an application bug), it attempts to diagnose the root cause, propose a minimal fix, and — with developer approval — apply it.
+
+---
+
+## 2. Scope & Constraints (V1)
+
+To build something that actually works reliably rather than a demo that handles nothing well, V1 is deliberately narrow:
+
+| Dimension            | V1 Scope                                         | Future Consideration             |
+|----------------------|--------------------------------------------------|----------------------------------|
+| **Language**         | Python only                                      | JavaScript/TypeScript, Go        |
+| **Test Framework**   | `pytest` only                                    | `unittest`, `jest`, `go test`    |
+| **CI Platform**      | GitHub Actions only                              | GitLab CI, CircleCI, Jenkins     |
+| **Fix Strategy**     | AST-level patching of targeted test functions     | Full file regeneration (opt-in)  |
+| **Approval Mode**    | Human-in-the-Loop by default, Autopilot opt-in   | Org-level policy rules           |
+| **Concurrency**      | Sequential per-PR processing                     | Parallel multi-PR pipelines      |
+
+This constraint set means the system can be **thoroughly tested and trusted** for one stack before expanding.
+
+---
+
+## 3. System Architecture
+
+```
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │                         REACT DASHBOARD                              │
+ │  • Pipeline status list          • Monaco side-by-side diff viewer   │
+ │  • WebSocket-driven log stream   • Context hint input form           │
+ └──────────────────────────┬───────────────────────────────────────────┘
+                            │
+                            ▼ (WebSockets + REST)
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │                    FASTAPI BACKEND                                    │
+ │  • GitHub webhook receiver       • Docker-based test runner          │
+ │  • File fetching (GitHub API)    • Session & state management        │
+ └──────────────────────────┬───────────────────────────────────────────┘
+                            │
+                            ▼ (State checkpointing)
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │                    LANGGRAPH AGENT GRAPH                              │
+ │  • Failure classifier node       • pytest fixer agent                │
+ │  • Human-in-the-Loop interrupt   • Retry evaluation loop             │
+ └──────────────────────────┬───────────────────────────────────────────┘
+                            │
+                            ▼ (Persistence)
+ ┌──────────────────────────────────────────────────────────────────────┐
+ │                    SUPABASE (PostgreSQL)                              │
+ │  • Pipeline run records          • LangGraph state checkpoints       │
+ │  • Fix history & audit log       • Realtime subscription triggers    │
+ └──────────────────────────────────────────────────────────────────────┘
+```
+
+**Why these choices:**
+
+- **FastAPI** — async-native, WebSocket support, clean dependency injection for session management.
+- **LangGraph** — provides durable state checkpointing and `interrupt_before` primitives, which solve the "pause for human review" requirement without building custom state machines.
+- **Supabase** — managed Postgres with built-in Realtime subscriptions, eliminating the need for a separate pub/sub layer. Row-level security available if multi-tenant access is needed later.
+- **React + Monaco** — Monaco provides production-grade diff rendering out of the box. No need to build a custom comparator.
+- **GitHub App** — a first-class bot identity registered on GitHub and installed per-repo by the repo owner. Unlike a Personal Access Token (which is tied to a human account and breaks if that person loses access), a GitHub App authenticates via a short-lived JWT + installation access token flow. It can be granted scoped permissions: `contents: read` for file fetching, `contents: write` for direct commits (Autopilot), and `pull_requests: write` for opening fix PRs (Manual). This is the same auth model used by Dependabot and Codecov.
+
+---
+
+## 4. Operational Workflow
+
+### Phase 1: Ingestion & Context Isolation
+
+1. **Trigger:** A GitHub Actions workflow includes a failure-condition step that POSTs a webhook to the Realive backend. The payload contains: `repository`, `pull_request_number`, `commit_sha`, and the raw CI log output.
+
+2. **Log Parsing:** The backend extracts structured failure data from the raw pytest output — specifically the failing test file path, function name, line number, and the assertion error message. This uses pytest's `--tb=short` formatted output, which follows a consistent pattern.
+
+3. **File Fetching:** Using the **GitHub App installation token**, the backend pulls only the files referenced in the failure trace — the failing test file and the source file it imports. No full repo clone. The App authenticates per-installation, meaning it only has access to repos where it has been explicitly installed. This keeps the context window small, the operation fast, and the access model auditable.
+
+4. **Session Creation:** A pipeline run record is created in Supabase with status `CLASSIFYING`. The React dashboard picks this up via Realtime subscription and displays it in the pipeline list.
+
+### Phase 2: Failure Classification
+
+The LangGraph graph begins at a **Classifier Node** that categorizes the failure before any fix attempt. This prevents the system from blindly rewriting tests when the actual application code is broken.
+
+**Failure taxonomy (not a binary split):**
+
+| Category                  | Action                           | Example                                                         |
+|---------------------------|----------------------------------|-----------------------------------------------------------------|
+| **Test Mismatch**         | Proceed to fixer agent           | `AssertionError: expected 'currency' field missing from response`|
+| **Application Bug**       | Stop. Notify developer.          | `TypeError: cannot read property of undefined` in `app/main.py` |
+| **Environment / Config**  | Stop. Flag as infrastructure.    | `ModuleNotFoundError: No module named 'redis'`                  |
+| **Flaky / Non-deterministic** | Stop. Flag for manual review. | Test passes on retry with no code changes                       |
+| **Unclassifiable**        | Stop. Flag as unknown.           | Ambiguous or multi-cause failure                                |
+
+Only **Test Mismatch** failures advance to the fixer. Everything else surfaces a clear notification explaining *why* the system chose not to act.
+
+### Phase 3: Human-in-the-Loop Gate
+
+Before any code modification, the graph executes LangGraph's `interrupt_before` on the fixer node:
+
+1. **State Freeze:** The agent's full context — parsed error, fetched files, classification result, proposed approach — is serialized to the Supabase checkpoint store. The process halts.
+
+2. **Dashboard Notification:** The React UI reflects the paused state, showing:
+   - A plain-English diagnosis of what broke and why
+   - The Monaco diff viewer with the proposed change
+   - An **Additional Context** text field where the developer can provide hints (e.g., *"Use '90210' as the mock zip code for this test"*)
+
+3. **Two approval paths:**
+   - **Manual Mode (default):** Developer reviews the diff, optionally adds context, clicks "Approve & Fix"
+   - **Autopilot Mode (opt-in per repo):** The system skips the pause, applies the fix immediately, and posts a PR comment summarizing what it changed
+
+4. **Resume:** On approval, the backend resumes the graph with the developer's hint injected:
+   ```python
+   graph.stream(Command(resume={"user_hint": user_typed_content}), config)
+   ```
+
+### Phase 4: AST-Level Patching & Validation
+
+**Why AST patching instead of asking the LLM to rewrite the function:**
+
+LLMs hallucinate imports, drop comments, reformat whitespace, and occasionally invent syntax. For test files that may contain dozens of test functions, regenerating the entire file is unsafe. Instead:
+
+1. **Parse:** The fixer agent uses `libCST` to parse the test file into a **Concrete Syntax Tree (CST)** — a tree that retains all original comments, whitespace, and formatting alongside the code structure.
+2. **Locate:** A `libCST.CSTTransformer` visitor walks the tree and identifies the specific failing test function node by name.
+3. **Patch:** The LLM generates *only* the replacement body for that specific function, constrained by the parsed context of imports and fixtures already in scope.
+4. **Reconstruct:** `libCST` writes the modified tree back to source — every untouched line, comment, and blank space is byte-for-byte identical to the original.
+
+**What the fixer agent can modify within an existing test function:**
+
+- **Add assertions** — if the API response now includes a `currency` field, the agent adds `assert "currency" in response` alongside existing assertions
+- **Update assertions** — if an expected value changed (e.g., a renamed key or restructured payload), the agent substitutes the old assertion with the correct one
+- **Remove stale assertions** — if a field was deprecated and no longer returned, the agent removes the assertion referencing it
+- **Update mock fixtures** — if a test constructs a request payload or mock object, the agent adds/removes/updates the fields in that fixture to match the new schema
+
+The key constraint: the fixer operates **within the boundary of the existing test function**. It does not create new test functions or new test files. It only makes the existing test accurate relative to the current API contract.
+
+**Why `libCST` over Python's built-in `ast` module:**
+Python's `ast` module (stdlib, no install needed) is simpler, but `ast.unparse()` strips all comments and normalizes whitespace. A developer seeing their carefully formatted, annotated test file come back mangled immediately loses trust in the tool — even if the logic is correct. `libCST` (`pip install libcst`) is used internally at Meta to modify Python at scale and preserves the concrete syntax exactly. The learning curve is a Visitor/Transformer pattern rather than direct node manipulation, but the payoff is output that looks like a human wrote it.
+
+**Acknowledged limitation:**
+- Complex test fixtures with deep class inheritance may not be fully captured in the isolated function context. The agent has visibility into the target function and the module-level imports/fixtures, but not into parent class hierarchies defined in other files.
+
+**Sandboxed Validation:**
+
+The patched test file is executed inside a **Docker container** — not via bare `subprocess.run()` on the host:
+
+```python
+# Test execution happens in an isolated Docker container
+client = docker.from_env()
+result = client.containers.run(
+    image="realive-runner:python",
+    command=f"pytest {target_test_file} -v --tb=short",
+    volumes={workspace_dir: {"bind": "/workspace", "mode": "ro"}},
+    mem_limit="512m",
+    network_mode="none",      # No network access
+    remove=True,
+    timeout=60
+)
+```
+
+Key isolation properties:
+- **No network access** — the test cannot make external calls
+- **Read-only volume mount** — the container cannot modify the host filesystem
+- **Memory and timeout limits** — prevents resource exhaustion
+- **Ephemeral container** — destroyed after each run
+
+**Retry loop:** If the patched test still fails, the new error output is fed back into the fixer agent for one additional attempt (max 2 total). If the second attempt fails, the system stops and reports the failure — it does not loop indefinitely.
+
+### Phase 5: Fix Delivery
+
+Once the patched test passes Docker validation, the fix is delivered back to the repository. The delivery method depends on the repo's configured mode:
+
+**Manual Mode → Open a Fix PR**
+
+Realive uses the GitHub App to open a new pull request targeting the original PR's branch:
+
+```
+Original PR:      feature/payment-gateway  →  main
+Realive PR:    realive/fix-pr-415    →  feature/payment-gateway
+```
+
+- The fix PR contains only the patched test file — nothing else
+- The PR description includes the plain-English diagnosis, the classification result, and a link to the Realive dashboard run
+- The developer reviews the fix PR, merges it into their branch, and the original CI re-runs clean
+- Every fix Realive ever makes is a revertable, attributable commit in the repo history
+- Required GitHub App permissions: `contents: write`, `pull_requests: write`
+
+**Autopilot Mode → Direct Commit to Branch**
+
+Realive commits the patched file directly to the PR's branch:
+
+```
+Commit: "fix(tests): update test_create_order assertions [realive]"
+Author: realive[bot]
+Branch: feature/payment-gateway
+```
+
+- The commit is authored by the GitHub App bot identity, making it clearly distinguishable from human commits
+- Immediately after committing, the App posts a comment on the original PR summarizing what changed, why, and a link to the full dashboard run
+- CI re-triggers automatically on the new commit
+- Required GitHub App permissions: `contents: write`, `pull_requests: write` (for the comment)
+
+| | Manual | Autopilot |
+|---|---|---|
+| **Mechanism** | Opens a fix PR | Direct commit to branch |
+| **Developer action required** | Merge the fix PR | None |
+| **Audit trail** | Fix PR in repo history | Commit + PR comment |
+| **Risk** | Zero — developer has final merge control | Low — commit is clearly bot-authored and revertable |
+| **Best for** | Teams adopting the tool, unknown codebases | High-trust teams with stable test patterns |
+
+---
+
+## 5. Dashboard Interface
+
+The React frontend is a single-page operational panel:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  REALIVE DASHBOARD                                                    │
+├──────────────────────┬───────────────────────────────────────────────────┤
+│ [PIPELINE RUNS]      │ [DETAIL: PR #415 — Payment Gateway Tests]         │
+│                      │                                                   │
+│ 🟢 PR #412: Auth     │  Status: WAITING FOR APPROVAL                     │
+│    Fixed (12s)       │                                                   │
+│                      │  Diagnosis:                                       │
+│ 🟡 PR #415: Payments │  "test_create_order expects response to contain   │
+│    Awaiting Review   │   only 'id' and 'total', but the endpoint now     │
+│                      │   also returns 'currency'. The assertion needs     │
+│ 🔴 PR #419: Data API │   to include the new field."                      │
+│    Classification:   │                                                   │
+│    Application Bug   │  ┌───────────────────────────────────────────┐    │
+│    (No fix attempted)│  │  DIFF VIEWER                              │    │
+│                      │  │  - assert "id" in response                │    │
+│                      │  │  + assert "id" in response                │    │
+│                      │  │  + assert "currency" in response          │    │
+│                      │  └───────────────────────────────────────────┘    │
+│ [SETTINGS]           │                                                   │
+│ Mode: Manual ▾       │  Additional context (optional):                   │
+│                      │  [ Default currency should be "USD"             ] │
+│                      │                                                   │
+│                      │  [APPROVE & FIX]              [DISMISS]           │
+└──────────────────────┴───────────────────────────────────────────────────┘
+```
+
+**Core components:**
+
+- **Pipeline List (left panel):** Shows all active and recent pipeline runs with color-coded status. Each entry links to its detail view.
+- **Detail View (right panel):** Displays the diagnosis, Monaco diff, and approval controls for a selected run.
+- **Log Stream:** Expandable panel showing raw agent reasoning and execution output, streamed via WebSocket.
+- **Settings:** Per-repo toggle between Manual and Autopilot modes.
+
+---
+
+## 6. What This System Does NOT Do
+
+Being explicit about boundaries prevents scope creep and sets honest expectations:
+
+- **Does not create new test files or new test functions.** It repairs and updates *existing* test functions — adding assertions for new fields, removing stale ones, and updating fixtures. It will not invent coverage for a feature that has no tests at all.
+- **Does not fix application bugs.** If the source code itself is broken, the system classifies it and stops.
+- **Does not support languages beyond Python in V1.** Multi-language support is a future goal, not a launch feature.
+- **Does not guarantee correctness.** The proposed fix may be wrong. That's why Human-in-the-Loop is the default mode, and every change is diffed before application.
+- **Does not replace your test strategy.** It's a maintenance tool, not a testing philosophy.
+- **Does not run without Docker.** Sandboxed execution is a hard requirement, not optional.
+
+---
+
+## 7. Future Roadmap
+
+These are directions the architecture is designed to grow into, but are **not part of V1**:
+
+1. **JavaScript/TypeScript support** — Add a Babel-based AST patcher and Jest runner container. The LangGraph routing structure already supports adding language-specific subagent nodes.
+2. **Go support** — Leverage `go/ast` for patching and `go test` for validation.
+3. **Fixture inheritance resolution** — Extend the fixer agent's context window to include parent class definitions fetched from other files in the repository, enabling accurate patching of complex pytest class-based test suites.
+4. **Semantic memory** — Use `pgvector` to store past fix patterns and retrieve similar failures, reducing LLM calls and improving fix accuracy over time.
+5. **Multi-PR parallelism** — Process multiple failing PRs concurrently with isolated LangGraph threads.
+6. **GitLab / CircleCI integration** — Abstract the webhook receiver and Git API layer to support multiple CI platforms.
+7. **Org-level policy engine** — Allow teams to define rules like "auto-approve assertion-only changes" or "always require review for fixture modifications."

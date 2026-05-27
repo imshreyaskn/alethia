@@ -1,0 +1,95 @@
+Now I have the full picture. Here's the complete architectural review:
+
+---
+
+## Architecture Issues & Improvements
+
+### 🔴 Critical (fix before scaling)
+
+**1. `validator.py` runs bare `subprocess` on the host — not Docker**
+The context doc says Docker isolation is a "hard requirement." The actual code does a `git clone` + `pip install` + `pytest` directly on the server process. This is a security risk and will break in multi-tenant use.
+- Fix: Implement the `docker.from_env().containers.run(...)` pattern described in `context.txt`
+
+**2. `asyncio.create_task()` in webhook drops agent runs silently on crash**
+If the LangGraph agent throws, the task dies with no recovery. No retry, no status update to `FAILED`.
+- Fix: Wrap `run_graph()` in try/except, always update DB status on failure
+
+**3. Two separate graphs instead of proper LangGraph checkpointing**
+`build_main_graph()` and `build_fix_graph()` are two disconnected graphs. State is manually serialized to DB and reconstructed. This is fragile — if schema evolves, reconstruction breaks. LangGraph has native interrupt/resume (`interrupt_before`) with `SqliteSaver` / `PostgresSaver` checkpointers for exactly this.
+- Fix: One graph with LangGraph's `SupabaseSaver` or `PostgresSaver` checkpoint; use `graph.invoke(Command(resume=...))` on approval
+
+**4. `fixer.py` rewrites the entire file instead of using `libCST`**
+The context doc explicitly describes AST-level patching with `libCST`. Current implementation asks the LLM to rewrite the whole file. This will mangle comments, formatting, and unrelated tests.
+- Fix: Implement the `CSTTransformer` approach — locate failing function node, patch only that body
+
+**5. `_guess_source_file()` always returns `app/<name>.py` regardless of loop**
+```python
+for prefix in ["app", "src", "lib"]:
+    return f"{prefix}/{source_name}"  # always returns app/ — loop is dead
+```
+- Fix: Remove the loop or actually check which path exists via the GitHub API
+
+---
+
+### 🟡 Structural Issues
+
+**6. `sys.path.insert()` hacks in both `ma
+<truncated 1469 bytes>
+y have Supabase Realtime available.
+- Fix: Replace polling with `supabase.channel().on('postgres_changes', ...)` subscriptions in the frontend
+
+**12. `log_parser.py` only handles the first failure**
+Multi-failure pytest runs return one `ParsedFailure`. For production repos with multiple failing tests, this drops all but one.
+- Fix: Return `List[ParsedFailure]`, process them as a batch or let the user pick
+
+---
+
+### 🟢 Smaller / Quality Issues
+
+**13. Groq `Groq()` client instantiated on every node call**
+`classifier_node` and `fixer_node` both do `client = Groq(api_key=...)` inside the function. Should be a module-level singleton or dependency-injected.
+
+**14. `save_fix_node` has duplicate DB update blocks with nearly identical code**
+The try/except fallback in `save_fix_node` writes the same fields twice. Consolidate.
+
+**15. No idempotency on webhook**
+Same `commit_sha` + `repo` + `pr_number` can create duplicate runs if GitHub retries the webhook. Add a unique constraint or dedup check.
+
+**16. `patch_diff` stored in DB is redundant**
+The diff can always be recomputed from `test_file_content` (stored) and `patched_test_file` (stored). Storing it separately risks divergence.
+
+**17. `fix_history` audit log has no `org_id` or `user_id`**
+Fine for now, required before multi-tenant.
+
+**18. No rate limiting on `/api/webhook/github` or `/api/runs/{id}/approve`**
+Both are public-facing. A bad actor can spam runs or approvals.
+
+---
+
+### Summary Priority Order
+
+| Priority | Item |
+|---|---|
+| P0 | Docker sandbox for validator |
+| P0 | Agent crash → DB status update |
+| P0 | `_guess_source_file` loop bug |
+| P1 | libCST AST patching in fixer |
+| P1 | Single graph with LangGraph checkpointing |
+| P1 | PR targets original PR branch, not `main` |
+| P1 | Webhook idempotency |
+| P2 | Replace polling with Supabase Realtime |
+| P2 | CORS from env |
+| P2 | Remove `sys.path` hacks |
+| P2 | Agent/app package dependency separation |
+| P3 | Multi-failure log parsing |
+| P3 | Groq client singleton |
+| P3 | Approval status gate fix |
+Four P2 items:
+1. CORS from env
+2. Remove `sys.path` hacks
+3. Replace polling with Supabase Realtime
+4. Agent/app package dependency separation
+
+Starting.
+
+**P2.1 — CORS from env**

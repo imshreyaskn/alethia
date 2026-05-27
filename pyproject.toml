@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "realive"
+version = "0.1.0"
+description = "AI-Assisted CI/CD Test Repair Platform"
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"app" = "backend/app"}
+packages = ["app", "app.api", "app.core", "app.db", "agent", "agent.nodes"]

@@ -1,0 +1,16 @@
+# ==============================================================================
+# Agent — AI/LangGraph dependencies
+# ==============================================================================
+# Install with: pip install -r requirements.txt
+
+# --- LangGraph / AI Agent ---
+langgraph==0.2.53         # Stateful agent graph framework
+langchain-google-genai==2.0.7  # LangChain wrapper for Gemini API
+google-generativeai==0.8.3     # Direct Gemini SDK
+groq==0.11.0              # Groq API client (classifier + fixer nodes)
+
+# --- AST Patching ---
+libcst==1.5.0             # Concrete Syntax Tree parser (preserves formatting)
+
+# --- Docker SDK ---
+docker==7.1.0             # Python client for Docker Engine API

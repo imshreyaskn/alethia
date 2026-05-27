@@ -1,0 +1,36 @@
+# ==============================================================================
+# .gitignore — Files that should NEVER be committed to git
+# ==============================================================================
+
+# --- Secrets (CRITICAL) ---
+.env
+*.pem
+*.key
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# --- Node / Frontend ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Docker ---
+*.log
