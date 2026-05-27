@@ -82,7 +82,7 @@ def hitl_gate_node(state: AgentState, config: RunnableConfig) -> dict:
         },
     }).execute()
 
-    return {}  # No state changes; graph pauses after this via interrupt_before=["fix"]
+    return {"run_id": run_id}  # Return run_id to satisfy LangGraph state update requirement
 
 
 # ── Save-fix node (post-fixer) ────────────────────────────────────────────────
@@ -113,7 +113,7 @@ def save_fix_node(state: AgentState, config: RunnableConfig) -> dict:
 
     db.table("pipeline_runs").update(update_data).eq("id", run_id).execute()
 
-    return {}
+    return {"run_id": run_id}
 
 
 # ── Graph factory ─────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ def pr_creator_node(state: AgentState, config: RunnableConfig) -> dict:
     test_path = fi.get("test_file_path", "tests/test.py")
 
     if not patched_content or state.get("validation_passed") is not True:
-        return {}
+        return {"run_id": run_id}
 
     print(f"[pr_creator] Preparing to open PR for {repo_full_name} on {test_path}")
 
@@ -110,8 +110,8 @@ def pr_creator_node(state: AgentState, config: RunnableConfig) -> dict:
             "status":           "VALIDATED",   # downgrade — patch is valid, PR just failed
             "validation_error": error_msg,
         }).eq("id", run_id).execute()
-        return {}
+        return {"run_id": run_id}
 
     except Exception as e:
         print(f"[pr_creator] Error: {e}")
-        return {}
+        return {"run_id": run_id}
