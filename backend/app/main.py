@@ -36,14 +36,12 @@ app = FastAPI(
 )
 
 # --- CORS Middleware ---
-# CORS (Cross-Origin Resource Sharing): browsers block requests from one
-# origin (e.g. localhost:5173) to another (localhost:8000) by default.
-# This tells the backend to allow the React frontend to talk to it.
+# For the MVP, we are allowing all origins ("*") so you don't get blocked
+# by Vercel's dynamic preview URLs.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()],
-
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
