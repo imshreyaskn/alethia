@@ -206,11 +206,6 @@ export default function Dashboard() {
           {/* #10 Signal Lost empty state */}
           {filtered.length === 0 && (
             <div className="signal-lost">
-              <div className="signal-bars">
-                {[12, 18, 8, 22, 10, 20, 6, 16].map((h, i) => (
-                  <div key={i} className="signal-bar" style={{ height: h }} />
-                ))}
-              </div>
               <span className="signal-no">No Activity</span>
             </div>
           )}
