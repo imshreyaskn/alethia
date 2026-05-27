@@ -778,9 +778,9 @@ body::after {
 
 /* ── #10 Signal lost empty state ─────────────────────────────────────────── */
 .signal-lost {
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: row;
   align-items: center; justify-content: center;
-  padding: 60px 20px; gap: 14px;
+  padding: 60px 20px; gap: 24px;
 }
 .signal-no {
   font-family: var(--mono); font-size: 10px;

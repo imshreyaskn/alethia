@@ -11,14 +11,16 @@ function Navbar() {
       <div className="nav-content">
         <Link to="/" className="nav-logo">
           <img
-            src="/favicon.svg"
-            alt="Alethia"
+            src={meshImg}
+            alt="Realive"
             style={{
               width: 28, height: 28, objectFit: 'contain',
-              marginRight: '8px'
+              mixBlendMode: 'screen',
+              opacity: 0.42,
+              filter: 'brightness(0.65) grayscale(0.2)',
             }}
           />
-          Alethia
+          Aletheia
         </Link>
       </div>
     </div>
