@@ -20,7 +20,7 @@ function Navbar() {
               filter: 'brightness(0.65) grayscale(0.2)',
             }}
           />
-          Aletheia
+          Alethia
         </Link>
       </div>
     </div>

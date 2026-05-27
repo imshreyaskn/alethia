@@ -47,7 +47,7 @@ body {
   background: var(--bg-0);
   /* Ambient glow using the app's accent color (#B7B4AE) */
   background-image:
-    radial-gradient(ellipse 55% 35% at 15% 10%, rgba(183, 180, 174, 0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 45% 45% at 15% 15%, rgba(183, 180, 174, 0.04) 0%, transparent 65%),
     radial-gradient(ellipse 45% 30% at 85% 85%, rgba(183, 180, 174, 0.05) 0%, transparent 65%);
   background-attachment: fixed;
   color: var(--t1);
@@ -72,9 +72,9 @@ button { font-family: inherit; border: none; cursor: pointer; background: none; 
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(10, 10, 10, 0.55);
-  backdrop-filter: blur(var(--glass-blur-heavy)) saturate(160%);
-  -webkit-backdrop-filter: blur(var(--glass-blur-heavy)) saturate(160%);
+  background: rgba(10, 10, 10, 0.25);
+  backdrop-filter: blur(var(--glass-blur-heavy)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-heavy)) saturate(180%);
   border-bottom: 1px solid var(--glass-border-hover);
   box-shadow: 0 1px 0 0 var(--glass-shine), 0 4px 24px rgba(0,0,0,0.4);
 }
