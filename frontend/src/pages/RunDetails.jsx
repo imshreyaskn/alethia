@@ -198,7 +198,8 @@ export default function RunDetails() {
     setBusy(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      await fetch(`${API_BASE_URL}/api/runs/${id}/${action}`, {
+      const baseUrl = API_BASE_URL.replace(/\/api$/, '')
+      await fetch(`${baseUrl}/api/runs/${id}/${action}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
