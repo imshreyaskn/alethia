@@ -11,6 +11,7 @@ export default function LandingPage() {
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
         scopes: 'repo workflow',
+        queryParams: { prompt: 'consent' },
       },
     })
     if (error) {
