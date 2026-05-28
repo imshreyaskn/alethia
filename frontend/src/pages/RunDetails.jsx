@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, CheckCircle, XCircle, ExternalLink, GitPullRequest, Clock, Loader } from 'lucide-react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { ArrowLeft, CheckCircle, XCircle, ExternalLink, GitPullRequest, Clock, Loader, Trash2 } from 'lucide-react'
 import DecryptedText from '../components/DecryptedText'
 import GlitchLoader from '../components/GlitchLoader'
 import StatusBadge from '../components/StatusBadge'
@@ -159,9 +159,11 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 export default function RunDetails() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [run, setRun] = useState(null)
   const [hint, setHint] = useState('')
   const [busy, setBusy] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const fetchRun = async () => {
     try {
@@ -199,6 +201,25 @@ export default function RunDetails() {
     setBusy(false)
   }
 
+  const handleDelete = async () => {
+    if (!window.confirm("Are you sure you want to delete this pipeline run? This action cannot be undone.")) return
+    
+    setDeleting(true)
+    try {
+      const { error } = await supabase.from('pipeline_runs').delete().eq('id', id)
+      if (error) {
+        console.error('Failed to delete run:', error)
+        alert('Failed to delete run. Ensure you have the correct permissions.')
+      } else {
+        navigate('/')
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (!run) {
     return <div className="empty" style={{ height: '60vh' }}><GlitchLoader length={30} speed={30} /></div>
   }
@@ -221,7 +242,23 @@ export default function RunDetails() {
               <span>{timeAgo(run.created_at)}</span>
             </div>
           </div>
-          <StatusBadge status={run.status} style={{ padding: '5px 12px', fontSize: 10 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <StatusBadge status={run.status} style={{ padding: '5px 12px', fontSize: 10 }} />
+            <button 
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{ 
+                background: 'transparent', border: 'none', cursor: 'pointer', 
+                color: 'var(--t3)', padding: 4, display: 'flex', alignItems: 'center',
+                transition: 'color 0.2s'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.color = '#ef4444'}
+              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--t3)'}
+              title="Delete Run"
+            >
+              {deleting ? <Loader style={{ width: 16, height: 16, animation: 'blink 1s infinite' }} /> : <Trash2 style={{ width: 16, height: 16 }} />}
+            </button>
+          </div>
         </div>
       </div>
 
