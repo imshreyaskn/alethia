@@ -14,6 +14,8 @@ function Navbar({ session }) {
     window.location.href = '/'
   }
 
+  if (!session) return null
+
   return (
     <div className="nav">
       <div className="nav-content" style={{ justifyContent: 'space-between', width: '100%' }}>
@@ -73,17 +75,17 @@ export default function App() {
   return (
     <BrowserRouter>
       <Navbar session={session} />
-      <div className="page">
+      <div style={{ width: '100%' }}>
         <Routes>
           {session ? (
             <>
-              <Route path="/" element={<Dashboard session={session} />} />
-              <Route path="/runs/:id" element={<RunDetails session={session} />} />
+              <Route path="/" element={<div className="page"><Dashboard session={session} /></div>} />
+              <Route path="/runs/:id" element={<div className="page"><RunDetails session={session} /></div>} />
             </>
           ) : (
             <Route path="/" element={<LandingPage />} />
           )}
-          <Route path="/auth/callback" element={<AuthCallback session={session} />} />
+          <Route path="/auth/callback" element={<div className="page"><AuthCallback session={session} /></div>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>

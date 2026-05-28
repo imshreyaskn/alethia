@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 
 const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%&*<>';
 
-export default function DecryptedText({ text, speed = 30, maxIterations = 10, animateOn = 'mount', className = '' }) {
+export default function DecryptedText({ text, speed = 20, maxIterations = 30, animateOn = 'mount', className = '' }) {
   const [displayText, setDisplayText] = useState('');
   const [isAnimating, setIsAnimating] = useState(false);
 
@@ -36,8 +36,8 @@ export default function DecryptedText({ text, speed = 30, maxIterations = 10, an
           return newText;
         });
 
-        // Advance decryption
-        iteration += 1 / maxIterations;
+        // Advance decryption (reveal characters faster based on total length)
+        iteration += text.length / maxIterations;
 
         // Finish
         if (iteration >= text.length) {
