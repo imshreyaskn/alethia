@@ -75,102 +75,57 @@ def validator_node(state: AgentState, config: RunnableConfig) -> dict:
 
     fetch_file_content = config["configurable"]["fetch_file_content"]
 
-    try:
+        get_github_client = config["configurable"].get("get_github_client")
+        if get_github_client:
+            try:
+                print(f"[validator] Downloading repository context...")
+                gh = get_github_client(repo)
+                repo_obj = gh.get_repo(repo)
+                zip_url = repo_obj.get_archive_link("zipball", ref=ref)
+                
+                import urllib.request
+                import zipfile
+                import io
+                
+                req = urllib.request.Request(zip_url)
+                with urllib.request.urlopen(req) as response:
+                    with zipfile.ZipFile(io.BytesIO(response.read())) as z:
+                        z.extractall(tmpdir)
+                
+                top_dirs = os.listdir(tmpdir)
+                if len(top_dirs) == 1 and os.path.isdir(os.path.join(tmpdir, top_dirs[0])):
+                    workspace_dir = os.path.join(tmpdir, top_dirs[0])
+                else:
+                    workspace_dir = tmpdir
+                print(f"[validator] Extracted repo to {workspace_dir}")
+            except Exception as e:
+                print(f"[validator] Failed to fetch repo zip: {e}. Falling back to empty dir.")
+                workspace_dir = tmpdir
+        else:
+            workspace_dir = tmpdir
+
         # ── Step 1: Write the patched test file ──────────────────────────────
-        full_test_path = os.path.join(tmpdir, test_path.replace("/", os.sep))
+        full_test_path = os.path.join(workspace_dir, test_path.replace("/", os.sep))
         os.makedirs(os.path.dirname(full_test_path), exist_ok=True)
         with open(full_test_path, "w", encoding="utf-8") as f:
             f.write(patched)
         print(f"[validator] Wrote patch to {test_path}")
 
-        # ── Step 2: Fetch requirements.txt via GitHub API (no clone) ─────────
+        # ── Step 2: Fetch requirements.txt via GitHub API ────────────────────
         req_content = _fetch_optional_file(repo, "requirements.txt", ref, fetch_file_content)
         if req_content:
-            req_path = os.path.join(tmpdir, "requirements.txt")
+            req_path = os.path.join(workspace_dir, "requirements.txt")
             with open(req_path, "w", encoding="utf-8") as f:
                 f.write(req_content)
-            print("[validator] Fetched requirements.txt")
 
         # ── Step 3: Run pytest (MVP Subprocess Fallback) ─────────────────────
-        
-        # [NOTE FOR FREE DEPLOYMENT]
-        # The following Docker implementation has been commented out because free hosting 
-        # platforms like Render do not support Docker-in-Docker. Instead, we use `subprocess` 
-        # to run the tests directly on the host for this MVP. This is less secure but works 
-        # for a trusted, single-tenant deployment.
-        
-        """
-        # --- ORIGINAL DOCKER IMPLEMENTATION ---
-        try:
-            client = docker.from_env()
-        except DockerException as e:
-            return {
-                "validation_passed": False,
-                "validation_error": (
-                    f"Docker not available: {e}. "
-                    "Ensure Docker is running and the socket is mounted."
-                ),
-            }
-
-        # Verify image exists
-        try:
-            client.images.get(RUNNER_IMAGE)
-        except ImageNotFound:
-            return {
-                "validation_passed": False,
-                "validation_error": (
-                    f"Runner image '{RUNNER_IMAGE}' not found. "
-                    "Build it with: docker build -t realive-runner:python ./runner"
-                ),
-            }
-
-        # Install dependencies first if requirements.txt is present.
-        if req_content:
-            print("[validator] Installing dependencies...")
-            prep = client.containers.run(
-                image=RUNNER_IMAGE,
-                command="pip install -r /workspace/requirements.txt -q",
-                volumes={tmpdir: {"bind": "/workspace", "mode": "rw"}},
-                mem_limit=MEMORY_LIMIT,
-                network_mode="none",
-                remove=True,
-                stdout=True,
-                stderr=True,
-            )
-
-        # Run the actual test
-        print(f"[{test_path}] Running pytest on {test_path} in Docker")
-        result = client.containers.run(
-            image=RUNNER_IMAGE,
-            command=f"pytest {test_path} -v --tb=short --no-header -q",
-            volumes={tmpdir: {"bind": "/workspace", "mode": "ro"}},
-            working_dir="/workspace",
-            mem_limit=MEMORY_LIMIT,
-            network_mode="none",    # No external network access
-            remove=True,            # Destroy container after run
-            stdout=True,
-            stderr=True,
-            timeout=TIMEOUT_SECONDS,
-        )
-
-        output = result.decode("utf-8", errors="replace").strip()[-2000:]
-        print(f"[validator] Tests PASSED")
-        print(output[-300:])
-
-        return {
-            "validation_passed": True,
-            "validation_error": None,
-        }
-        """
-        
-        # --- MVP SUBPROCESS IMPLEMENTATION ---
         import subprocess
         
         if req_content:
             print("[validator] Installing dependencies via subprocess...")
             subprocess.run(
                 ["pip", "install", "-r", "requirements.txt", "-q"],
-                cwd=tmpdir,
+                cwd=workspace_dir,
                 check=False
             )
             
@@ -178,7 +133,7 @@ def validator_node(state: AgentState, config: RunnableConfig) -> dict:
         try:
             result = subprocess.run(
                 ["pytest", test_path, "-v", "--tb=short", "--no-header", "-q"],
-                cwd=tmpdir,
+                cwd=workspace_dir,
                 capture_output=True,
                 text=True,
                 timeout=TIMEOUT_SECONDS
