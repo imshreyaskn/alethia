@@ -10,6 +10,24 @@ export default function AuthCallback({ session }) {
     const checkInstallation = async (activeSession) => {
       try {
         const userId = activeSession.user.id
+        const providerToken = activeSession.provider_token
+        
+        // 1. Proactively sync installations from GitHub if we have the provider token
+        if (providerToken) {
+          try {
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+            await fetch(`${apiUrl}/github/sync-installations`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${activeSession.access_token}`
+              },
+              body: JSON.stringify({ provider_token: providerToken })
+            })
+          } catch (syncErr) {
+            console.warn('Failed to proactively sync installations:', syncErr)
+          }
+        }
 
         // 2. Check if the user has any connected GitHub App installations
         const { data: installations, error: dbError } = await supabase

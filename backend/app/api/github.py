@@ -4,10 +4,16 @@ github.py — GitHub App API routes
 GET /api/github/fetch-file  — test endpoint to verify App auth works
                               (used in Milestone 2 verification only)
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Header, Depends
+from pydantic import BaseModel
+import httpx
 from app.github.auth import fetch_file_content
+from app.db.client import db
 
 router = APIRouter()
+
+class SyncInstallationsRequest(BaseModel):
+    provider_token: str
 
 
 @router.get("/github/fetch-file", tags=["GitHub"])
