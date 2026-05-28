@@ -205,10 +205,23 @@ def build_graph(checkpointer=None):
 
 # ── Singleton with checkpointer ───────────────────────────────────────────────
 
-_checkpointer = MemorySaver()
+from app.core.config import settings
+
+if settings.DATABASE_URL and settings.DATABASE_URL.startswith("postgres"):
+    from psycopg_pool import ConnectionPool
+    from langgraph.checkpoint.postgres import PostgresSaver
+    
+    # We must keep the pool open for the lifetime of the application
+    _pool = ConnectionPool(conninfo=settings.DATABASE_URL)
+    _checkpointer = PostgresSaver(_pool)
+    _checkpointer.setup()  # Creates the 'checkpoints' schema in Postgres
+else:
+    from langgraph.checkpoint.memory import MemorySaver
+    _checkpointer = MemorySaver()
+
 realive_graph = build_graph(checkpointer=_checkpointer)
 
 
-def get_checkpointer() -> MemorySaver:
+def get_checkpointer():
     """Returns the shared checkpointer instance. Used by the approve endpoint."""
     return _checkpointer

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # --- Supabase (Milestone 1) ---
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_KEY: str = ""  # Service role key — bypasses Row Level Security
+    DATABASE_URL: str = ""          # Direct Postgres URI (e.g. postgresql://...)
 
     # --- GitHub App (Milestone 2) ---
     GITHUB_APP_ID: str = ""
