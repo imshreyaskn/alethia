@@ -105,8 +105,12 @@ def validator_node(state: AgentState, config: RunnableConfig) -> dict:
                     workspace_dir = tmpdir
                 print(f"[validator] Extracted repo to {workspace_dir}")
             except Exception as e:
-                print(f"[validator] Failed to fetch repo zip: {e}. Falling back to empty dir.")
-                workspace_dir = tmpdir
+                error_msg = f"Failed to fetch repository zipball from GitHub: {type(e).__name__}: {str(e)}"
+                print(f"[validator] {error_msg}")
+                return {
+                    "validation_passed": False,
+                    "validation_error": error_msg,
+                }
         else:
             workspace_dir = tmpdir
 
