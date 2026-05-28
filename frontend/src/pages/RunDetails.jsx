@@ -307,13 +307,13 @@ export default function RunDetails() {
 
           {/* Retry Gate */}
           {isRetry && run.validation_passed === false && (
-            <div className="gate" style={{ border: '1px solid rgba(255,100,100,0.2)' }}>
-              <div className="gate-head" style={{ color: 'var(--red)' }}>Validation Failed</div>
+            <div className="gate">
+              <div className="gate-head" style={{ background: 'var(--t2)' }}>Validation Failed</div>
               <div className="gate-body">
                 <p>The generated patch did not pass the test suite. Provide a hint to guide the agent and try again.</p>
                 <textarea className="hint" rows="3" placeholder="e.g. 'Use simple assert instead of unittest.TestCase'" value={hint} onChange={e => setHint(e.target.value)} />
                 <div className="gate-btns">
-                  <button className="btn btn-go" onClick={() => act('retry')} disabled={busy} style={{ background: 'var(--red)' }}>
+                  <button className="btn btn-go" onClick={() => act('retry')} disabled={busy} style={{ background: 'var(--t2)' }}>
                     {busy ? <Loader style={{ width: 12, height: 12, animation: 'blink 1s ease-in-out infinite' }} /> : <CheckCircle style={{ width: 12, height: 12 }} />}
                     Retry Patch
                   </button>
