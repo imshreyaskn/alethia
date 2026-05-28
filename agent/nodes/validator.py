@@ -75,6 +75,7 @@ def validator_node(state: AgentState, config: RunnableConfig) -> dict:
 
     fetch_file_content = config["configurable"]["fetch_file_content"]
 
+    try:
         get_github_client = config["configurable"].get("get_github_client")
         if get_github_client:
             try:
