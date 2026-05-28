@@ -198,7 +198,7 @@ def build_graph(checkpointer=None):
     if checkpointer:
         return builder.compile(
             checkpointer=checkpointer,
-            interrupt_before=["fix", "retry_gate"],   # Pauses MANUAL path
+            interrupt_after=["hitl_gate", "retry_gate"],   # Pauses after gates
         )
     return builder.compile()
 
