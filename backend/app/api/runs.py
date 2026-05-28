@@ -19,7 +19,8 @@ No manual state reconstruction — LangGraph handles state persistence.
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from app.core.auth import AuthenticatedUser, get_current_user
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from app.db.client import db
@@ -34,23 +35,28 @@ groq_client = Groq(api_key=settings.GROQ_API_KEY)
 
 # ── GET /api/runs ─────────────────────────────────────────────────────────────
 @router.get("/runs", tags=["Runs"])
-def list_runs(limit: int = 20):
-    """Returns the most recent pipeline runs, newest first."""
+def list_runs(limit: int = 20, user: AuthenticatedUser = Depends(get_current_user)):
+    """Returns the most recent pipeline runs for the authenticated user, newest first."""
+    if not user.allowed_repos:
+        return {"runs": []}
     result = db.table("pipeline_runs").select(
         "id, repo_full_name, pr_number, commit_sha, status, "
         "failure_category, classification_reason, created_at"
-    ).order("created_at", desc=True).limit(limit).execute()
+    ).in_("repo_full_name", user.allowed_repos).order("created_at", desc=True).limit(limit).execute()
     return {"runs": result.data}
 
 
 # ── GET /api/runs/{run_id} ────────────────────────────────────────────────────
 @router.get("/runs/{run_id}", tags=["Runs"])
-def get_run(run_id: str):
+def get_run(run_id: str, user: AuthenticatedUser = Depends(get_current_user)):
     """Returns full details of a single pipeline run including the patch diff."""
     result = db.table("pipeline_runs").select("*").eq("id", run_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    return result.data[0]
+    run = result.data[0]
+    if run["repo_full_name"] not in user.allowed_repos:
+        raise HTTPException(status_code=403, detail="You do not have access to this run")
+    return run
 
 
 # ── POST /api/runs/{run_id}/approve ──────────────────────────────────────────
@@ -59,14 +65,14 @@ class ApproveRequest(BaseModel):
 
 
 @router.post("/runs/{run_id}/approve", tags=["Runs"])
-async def approve_run(run_id: str, body: ApproveRequest):
+async def approve_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser = Depends(get_current_user)):
     """
     Developer approves the classifier's TEST_MISMATCH decision.
 
     Resumes the paused LangGraph from its checkpoint, injecting the
     developer's optional hint into state. No state reconstruction needed.
     """
-    result = db.table("pipeline_runs").select("id, status").eq("id", run_id).execute()
+    result = db.table("pipeline_runs").select("id, status, repo_full_name").eq("id", run_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
@@ -76,6 +82,9 @@ async def approve_run(run_id: str, body: ApproveRequest):
             status_code=400,
             detail=f"Run is in status '{run['status']}' — can only approve WAITING_FOR_APPROVAL runs.",
         )
+
+    if run["repo_full_name"] not in user.allowed_repos:
+        raise HTTPException(status_code=403, detail="You do not have access to this run")
 
     # Mark as in-progress
     db.table("pipeline_runs").update({"status": "FIXING", "user_hint": body.hint}).eq("id", run_id).execute()
@@ -127,12 +136,12 @@ async def approve_run(run_id: str, body: ApproveRequest):
 
 # ── POST /api/runs/{run_id}/retry ──────────────────────────────────────────────
 @router.post("/runs/{run_id}/retry", tags=["Runs"])
-async def retry_run(run_id: str, body: ApproveRequest):
+async def retry_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser = Depends(get_current_user)):
     """
     Developer requests a retry after validation failed.
     Resumes the graph from the retry_gate.
     """
-    result = db.table("pipeline_runs").select("id, status").eq("id", run_id).execute()
+    result = db.table("pipeline_runs").select("id, status, repo_full_name").eq("id", run_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
@@ -142,6 +151,9 @@ async def retry_run(run_id: str, body: ApproveRequest):
             status_code=400,
             detail=f"Run is in status '{run['status']}' — can only retry VALIDATION_FAILED runs.",
         )
+
+    if run["repo_full_name"] not in user.allowed_repos:
+        raise HTTPException(status_code=403, detail="You do not have access to this run")
 
     db.table("pipeline_runs").update({
         "status": "FIXING",
@@ -199,11 +211,15 @@ async def retry_run(run_id: str, body: ApproveRequest):
 
 # ── POST /api/runs/{run_id}/reject ────────────────────────────────────────────
 @router.post("/runs/{run_id}/reject", tags=["Runs"])
-def reject_run(run_id: str):
+def reject_run(run_id: str, user: AuthenticatedUser = Depends(get_current_user)):
     """Developer rejects the fix. Run is closed with no code changes."""
-    result = db.table("pipeline_runs").select("id, status").eq("id", run_id).execute()
+    result = db.table("pipeline_runs").select("id, status, repo_full_name").eq("id", run_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    run = result.data[0]
+    if run["repo_full_name"] not in user.allowed_repos:
+        raise HTTPException(status_code=403, detail="You do not have access to this run")
 
     db.table("pipeline_runs").update({"status": "REJECTED"}).eq("id", run_id).execute()
     db.table("fix_history").insert({

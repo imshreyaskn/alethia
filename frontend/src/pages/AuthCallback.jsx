@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 
-export default function AuthCallback({ session }) {
+export default function AuthCallback() {
+  const { session } = useAuth()
   const navigate = useNavigate()
   const [error, setError] = useState(null)
 
