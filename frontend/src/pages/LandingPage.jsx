@@ -10,6 +10,7 @@ export default function LandingPage() {
       provider: 'github',
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
+        scopes: 'repo workflow',
       },
     })
     if (error) {
