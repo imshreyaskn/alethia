@@ -22,6 +22,7 @@ export default function GlitchLoader({ length = 12, speed = 50, className = '' }
       className={className}
       style={{ 
         fontFamily: 'var(--mono)', 
+        fontSize: '11px',
         color: 'var(--t2)', 
         letterSpacing: '0.1em',
         textShadow: '1px 0px 0px rgba(255,0,0,0.5), -1px 0px 0px rgba(0,255,255,0.5)'

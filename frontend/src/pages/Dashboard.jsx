@@ -118,18 +118,30 @@ export default function Dashboard() {
         </div>
 
         {/* Centre mesh — screen blend makes white form visible on dark bg */}
-        <div style={{ position: 'relative', flexShrink: 0 }}>
+        <div style={{ position: 'relative', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <img
             src={meshImg}
             alt="Realive"
             style={{
               width: 260, height: 260, objectFit: 'contain',
               mixBlendMode: 'screen',
-              opacity: 0.35,
-              filter: 'brightness(0.65) grayscale(0.2)',
+              opacity: 0.6,
+              filter: 'brightness(0.8) grayscale(0.2)',
               userSelect: 'none', pointerEvents: 'none', display: 'block',
             }}
           />
+          <h1 style={{ 
+            fontFamily: 'var(--logo)', 
+            fontSize: '32px', 
+            fontWeight: '300', 
+            letterSpacing: '0.05em', 
+            color: 'var(--t1)', 
+            position: 'absolute',
+            bottom: '20px',
+            textShadow: '0 4px 20px rgba(0,0,0,0.5)'
+          }}>
+            Alethia
+          </h1>
           {/* Soft ambient glow behind image */}
           <div style={{
             position: 'absolute', inset: 0, pointerEvents: 'none',
