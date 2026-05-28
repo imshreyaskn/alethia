@@ -151,49 +151,50 @@ async def receive_github_webhook(
                 "source_file_path":    parsed_failure.source_file_path,
             }
 
-        # Step 6: Idempotency check
-        TERMINAL_STATUSES = ("DELIVERED", "REJECTED", "STOPPED", "FAILED")
-        
-        # We need to distinguish between different failures in the same CI run.
-        # Supabase JSON querying: failure_info->>test_function_name
-        query = db.table("pipeline_runs").select("id, status").eq(
+        # Step 6: Smart Idempotency & Deduplication Check
+        # We find recent runs for this repository (ignoring commit_sha)
+        existing = db.table("pipeline_runs").select("id, status, failure_info, pr_url").eq(
             "repo_full_name", payload.repository
-        ).eq(
-            "pr_number", payload.pr_number
-        ).eq(
-            "commit_sha", payload.commit_sha
-        ).not_.in_("status", list(TERMINAL_STATUSES))
-        
-        existing = query.execute()
-        
-        is_duplicate = False
-        if existing.data:
-            # Manually check if the failure_info matches, since JSON querying might be tricky depending on setup
-            for run in existing.data:
-                # We need to fetch the full run to check failure_info if not selected above,
-                # but wait, let's just select failure_info in the query.
-                pass
-                
-        # Better idempotency check:
-        existing = db.table("pipeline_runs").select("id, status, failure_info").eq(
-            "repo_full_name", payload.repository
-        ).eq(
-            "pr_number", payload.pr_number
-        ).eq(
-            "commit_sha", payload.commit_sha
-        ).not_.in_("status", list(TERMINAL_STATUSES)).execute()
+        ).order("created_at", desc=True).limit(50).execute()
         
         existing_run_id = None
         for run in existing.data:
             run_fi = run.get("failure_info")
-            # If both are None, or if their test_function_name matches, it's a duplicate
+            
+            # Match if both are unparseable
             if failure_info is None and run_fi is None:
-                existing_run_id = run["id"]
-                break
-            if failure_info and run_fi and failure_info.get("test_function_name") == run_fi.get("test_function_name"):
-                existing_run_id = run["id"]
-                break
+                if run.get("status") not in ("STOPPED", "FAILED", "DELIVERED", "REJECTED"):
+                    existing_run_id = run["id"]
+                    break
+            
+            # Match exact test failure signature
+            elif failure_info and run_fi:
+                same_test = failure_info.get("test_function_name") == run_fi.get("test_function_name")
+                same_error = failure_info.get("assertion_error") == run_fi.get("assertion_error")
                 
+                if same_test and same_error:
+                    status = run.get("status")
+                    if status not in ("STOPPED", "FAILED", "DELIVERED", "REJECTED"):
+                        # We are actively working on this EXACT failure right now.
+                        existing_run_id = run["id"]
+                        break
+                    elif status == "DELIVERED" and run.get("pr_url"):
+                        # We already created a PR for this exact failure! Is it still open?
+                        try:
+                            pr_url = run.get("pr_url")
+                            if "/pull/" in pr_url:
+                                pr_num = int(pr_url.split("/pull/")[-1].split("/")[0]) # Extract PR number cleanly
+                                gh = get_github_client(payload.repository)
+                                repo_obj = gh.get_repo(payload.repository)
+                                pr = repo_obj.get_pull(pr_num)
+                                if pr.state == "open":
+                                    print(f"[webhook] Deduplicated: PR #{pr_num} is still open for {failure_info.get('test_function_name')}.")
+                                    existing_run_id = run["id"]
+                                    break
+                        except Exception as e:
+                            print(f"[webhook] Failed to check PR status for deduplication: {e}")
+                            pass
+                            
         if existing_run_id:
             created_runs.append({
                 "run_id": existing_run_id,
