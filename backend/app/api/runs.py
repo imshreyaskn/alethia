@@ -143,7 +143,14 @@ async def retry_run(run_id: str, body: ApproveRequest):
             detail=f"Run is in status '{run['status']}' — can only retry VALIDATION_FAILED runs.",
         )
 
-    db.table("pipeline_runs").update({"status": "FIXING", "user_hint": body.hint}).eq("id", run_id).execute()
+    db.table("pipeline_runs").update({
+        "status": "FIXING",
+        "user_hint": body.hint,
+        "validation_passed": None,
+        "validation_error": None,
+        "patched_test_file": None,
+        "patch_diff": None
+    }).eq("id", run_id).execute()
     db.table("fix_history").insert({
         "run_id": run_id,
         "action": "RETRY_REQUESTED",
