@@ -87,8 +87,13 @@ def validator_node(state: AgentState, config: RunnableConfig) -> dict:
                 import urllib.request
                 import zipfile
                 import io
+                from app.github.auth import get_installation_token
                 
-                req = urllib.request.Request(zip_url)
+                token = get_installation_token(repo)
+                req = urllib.request.Request(zip_url, headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github.v3+json"
+                })
                 with urllib.request.urlopen(req) as response:
                     with zipfile.ZipFile(io.BytesIO(response.read())) as z:
                         z.extractall(tmpdir)
