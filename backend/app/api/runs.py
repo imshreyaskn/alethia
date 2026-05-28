@@ -72,7 +72,7 @@ async def approve_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser
     Resumes the paused LangGraph from its checkpoint, injecting the
     developer's optional hint into state. No state reconstruction needed.
     """
-    result = db.table("pipeline_runs").select("id, status, repo_full_name").eq("id", run_id).execute()
+    result = db.table("pipeline_runs").select("*").eq("id", run_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
@@ -112,12 +112,34 @@ async def approve_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser
             from agent.graph import realive_graph, get_checkpointer
             checkpointer = get_checkpointer()
 
-            # Inject user_hint into the checkpoint state, then resume
-            await run_in_threadpool(
-                realive_graph.update_state,
-                graph_config,
-                {"user_hint": body.hint},
-            )
+            # If MemorySaver lost the state on restart, reconstruct it from DB
+            current_state = realive_graph.get_state(graph_config)
+            if not current_state.values.get("repo_full_name"):
+                print(f"[runs] Checkpoint missing for {run_id}. Reconstructing state from DB...")
+                db_state = {
+                    "run_id": run_id,
+                    "repo_full_name": run["repo_full_name"],
+                    "pr_number": run["pr_number"],
+                    "commit_sha": run["commit_sha"],
+                    "raw_ci_log": "",
+                    "mode": run.get("mode", "MANUAL"),
+                    "failure_info": run.get("failure_info"),
+                    "failure_category": run.get("failure_category"),
+                    "classification_reason": run.get("classification_reason"),
+                    "stop_reason": None,
+                    "test_file_content": run.get("test_file_content"),
+                    "source_file_content": run.get("source_file_content"),
+                    "user_hint": body.hint,
+                    "patched_test_file": run.get("patched_test_file"),
+                    "patch_diff": run.get("patch_diff"),
+                    "validation_passed": run.get("validation_passed"),
+                    "validation_error": run.get("validation_error"),
+                    "pr_url": run.get("pr_url"),
+                    "retry_count": run.get("retry_count", 0) or 0
+                }
+                await run_in_threadpool(realive_graph.update_state, graph_config, db_state)
+            else:
+                await run_in_threadpool(realive_graph.update_state, graph_config, {"user_hint": body.hint})
             # invoke(None, config) resumes from checkpoint — no state dict needed
             await run_in_threadpool(realive_graph.invoke, None, graph_config)
         except Exception as exc:
@@ -141,7 +163,7 @@ async def retry_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser =
     Developer requests a retry after validation failed.
     Resumes the graph from the retry_gate.
     """
-    result = db.table("pipeline_runs").select("id, status, repo_full_name").eq("id", run_id).execute()
+    result = db.table("pipeline_runs").select("*").eq("id", run_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
@@ -187,12 +209,35 @@ async def retry_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser =
             from agent.graph import realive_graph, get_checkpointer
             checkpointer = get_checkpointer()
 
-            # Inject user_hint into the checkpoint state, then resume
-            await run_in_threadpool(
-                realive_graph.update_state,
-                graph_config,
-                {"user_hint": body.hint, "retry_count": 1}, # Increment or set retry count
-            )
+            # If MemorySaver lost the state on restart, reconstruct it from DB
+            current_state = realive_graph.get_state(graph_config)
+            if not current_state.values.get("repo_full_name"):
+                print(f"[runs] Checkpoint missing for {run_id}. Reconstructing state from DB...")
+                db_state = {
+                    "run_id": run_id,
+                    "repo_full_name": run["repo_full_name"],
+                    "pr_number": run["pr_number"],
+                    "commit_sha": run["commit_sha"],
+                    "raw_ci_log": "",
+                    "mode": run.get("mode", "MANUAL"),
+                    "failure_info": run.get("failure_info"),
+                    "failure_category": run.get("failure_category"),
+                    "classification_reason": run.get("classification_reason"),
+                    "stop_reason": None,
+                    "test_file_content": run.get("test_file_content"),
+                    "source_file_content": run.get("source_file_content"),
+                    "user_hint": body.hint,
+                    "patched_test_file": run.get("patched_test_file"),
+                    "patch_diff": run.get("patch_diff"),
+                    "validation_passed": run.get("validation_passed"),
+                    "validation_error": run.get("validation_error"),
+                    "pr_url": run.get("pr_url"),
+                    "retry_count": 1
+                }
+                await run_in_threadpool(realive_graph.update_state, graph_config, db_state)
+            else:
+                current_retry = current_state.values.get("retry_count", 0) or 0
+                await run_in_threadpool(realive_graph.update_state, graph_config, {"user_hint": body.hint, "retry_count": current_retry + 1})
             # invoke(None, config) resumes from checkpoint
             await run_in_threadpool(realive_graph.invoke, None, graph_config)
         except Exception as exc:
