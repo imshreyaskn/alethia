@@ -71,8 +71,14 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchRuns = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/runs`)
-        if (res.ok) setRuns((await res.json()).runs || [])
+        const { data, error } = await supabase
+          .from('pipeline_runs')
+          .select('id, repo_full_name, pr_number, commit_sha, status, failure_category, classification_reason, created_at')
+          .order('created_at', { ascending: false })
+          .limit(20)
+        
+        if (error) throw error
+        if (data) setRuns(data)
       } catch (e) { console.error(e) }
       finally { setLoading(false) }
     }

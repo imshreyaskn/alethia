@@ -167,8 +167,14 @@ export default function RunDetails() {
 
   const fetchRun = async () => {
     try {
-      const r = await fetch(`${API_BASE_URL}/api/runs/${id}`)
-      if (r.ok) setRun(await r.json())
+      const { data, error } = await supabase
+        .from('pipeline_runs')
+        .select('*')
+        .eq('id', id)
+        .single()
+        
+      if (error) throw error
+      if (data) setRun(data)
     } catch (e) { console.error(e) }
   }
 
