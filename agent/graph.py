@@ -208,13 +208,23 @@ def build_graph(checkpointer=None):
 from app.core.config import settings
 
 if settings.DATABASE_URL and settings.DATABASE_URL.startswith("postgres"):
-    from psycopg_pool import ConnectionPool
-    from langgraph.checkpoint.postgres import PostgresSaver
-    
-    # We must keep the pool open for the lifetime of the application
-    _pool = ConnectionPool(conninfo=settings.DATABASE_URL)
-    _checkpointer = PostgresSaver(_pool)
-    _checkpointer.setup()  # Creates the 'checkpoints' schema in Postgres
+    try:
+        from psycopg_pool import ConnectionPool
+        from langgraph.checkpoint.postgres import PostgresSaver
+        
+        # Ensure sslmode=require for Supabase
+        conninfo = settings.DATABASE_URL
+        if "sslmode" not in conninfo:
+            conninfo += "?sslmode=require" if "?" not in conninfo else "&sslmode=require"
+
+        _pool = ConnectionPool(conninfo=conninfo)
+        _checkpointer = PostgresSaver(_pool)
+        _checkpointer.setup()  # Creates the 'checkpoints' schema in Postgres
+        print("[graph] Successfully connected to PostgresSaver")
+    except Exception as e:
+        print(f"[graph] Failed to initialize PostgresSaver: {e}. Falling back to MemorySaver.")
+        from langgraph.checkpoint.memory import MemorySaver
+        _checkpointer = MemorySaver()
 else:
     from langgraph.checkpoint.memory import MemorySaver
     _checkpointer = MemorySaver()
