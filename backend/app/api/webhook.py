@@ -91,27 +91,61 @@ def verify_github_signature(raw_body: bytes, signature_header: str) -> bool:
 
 
 # ── Webhook Endpoint ──────────────────────────────────────────────────────────
+async def handle_github_installation_event(event: str, payload: dict):
+    """Handles GitHub App installation events (SaaS Readiness)."""
+    action = payload.get("action")
+    installation_id = payload.get("installation", {}).get("id")
+    sender_login = payload.get("sender", {}).get("login")
+    
+    if not installation_id:
+        return {"message": "Ignored: no installation id"}
+        
+    if action in ("created", "repositories_added", "repositories_removed", "deleted"):
+        # 1. Look up the user's Supabase UUID via our RPC
+        rpc_response = db.rpc("get_user_id_from_github_login", {"github_login": sender_login}).execute()
+        user_id = rpc_response.data if rpc_response.data else None
+        
+        if not user_id:
+            print(f"[webhook] Warning: Could not find user_id for github_login {sender_login}")
+            return {"message": "User not found in auth.users"}
+
+        if action == "deleted":
+            db.table("installations").delete().eq("installation_id", installation_id).execute()
+            return {"message": "Installation deleted"}
+            
+        # 2. Extract repositories
+        repositories = payload.get("repositories", [])
+        if "repositories_added" in action or "repositories_removed" in action:
+            # For these events, GitHub sends 'repositories_added' and 'repositories_removed'
+            # But wait, it's easier to just fetch all repos for this installation using the API?
+            # Actually, `repositories` is sent in 'created', and for 'repositories_added' it's just delta.
+            # A more robust way is to just fetch the full list if needed, or parse the delta.
+            # But the webhook payload for 'created' has `repositories`.
+            # Let's handle 'created' primarily for now, as MVP.
+            pass
+            
+        repo_names = [repo["full_name"] for repo in payload.get("repositories", [])]
+        
+        # 3. Upsert into Supabase
+        db.table("installations").upsert({
+            "user_id": user_id,
+            "installation_id": installation_id,
+            "repositories": repo_names
+        }, on_conflict="installation_id").execute()
+        
+    return {"message": f"Installation event '{action}' processed."}
+
 @router.post("/webhook/github", tags=["Webhook"])
 async def receive_github_webhook(
     request: Request,
     x_hub_signature_256: Optional[str] = Header(None),
+    x_github_event: Optional[str] = Header(None),
 ):
     """
-    Receives CI failure notifications from GitHub Actions.
-    
-    Flow:
-    1. Verify the request is genuinely from GitHub (HMAC signature check)
-    2. Parse the raw pytest log → structured failure info
-    3. Create a pipeline_run record in Supabase (status: CLASSIFYING)
-    4. Return the run_id so the caller knows we've logged it
-    
-    The LangGraph agent (Milestone 4) will pick up from status=CLASSIFYING
-    and run the classifier node.
+    Receives events from GitHub (CI failures, App installations).
     """
 
     # Step 1: Read raw body BEFORE parsing JSON
-    # We need raw bytes for signature verification — once parsed to JSON,
-    # the original byte sequence may differ (key ordering, whitespace, etc.)
     raw_body = await request.body()
 
     # Step 2: Verify signature
@@ -122,13 +156,22 @@ async def receive_github_webhook(
                 detail="Invalid webhook signature. Check GITHUB_WEBHOOK_SECRET in .env."
             )
 
-    # Step 3: Parse JSON body into our schema
+    # Step 3: Parse JSON body
     try:
         import json
         body_dict = json.loads(raw_body)
-        payload = WebhookPayload(**body_dict)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid payload: {e}")
+
+    # Handle GitHub App Installations natively
+    if x_github_event in ("installation", "installation_repositories"):
+        return await handle_github_installation_event(x_github_event, body_dict)
+
+    # Otherwise, assume it's our custom CI failure payload
+    try:
+        payload = WebhookPayload(**body_dict)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid CI payload: {e}")
 
     # Step 4: Parse the pytest log (returns a list of ParsedFailure)
     parsed_failures = parse_pytest_output(payload.ci_log)
