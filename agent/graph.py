@@ -99,7 +99,7 @@ def save_fix_node(state: AgentState, config: RunnableConfig) -> dict:
     }
 
     if state.get("patched_test_file"):
-        update_data["status"] = "VALIDATED" if state.get("validation_passed") is True else "FIX_READY"
+        update_data["status"] = "VALIDATED" if state.get("validation_passed") is True else "VALIDATION_FAILED"
         update_data["patched_test_file"] = state.get("patched_test_file")
         update_data["patch_diff"] = state.get("patch_diff")
         update_data["validation_passed"] = state.get("validation_passed")
@@ -114,6 +114,29 @@ def save_fix_node(state: AgentState, config: RunnableConfig) -> dict:
     db.table("pipeline_runs").update(update_data).eq("id", run_id).execute()
 
     return {"run_id": run_id}
+
+
+# ── Retry Gate node ───────────────────────────────────────────────────────────
+
+def retry_gate_node(state: AgentState, config: RunnableConfig) -> dict:
+    """
+    Graph pauses here after validation fails (interrupt_before=["retry_gate"]).
+    Developer can provide a new hint and click Retry.
+    """
+    return {"run_id": state["run_id"]}
+
+
+# ── Routing Post-Validation ───────────────────────────────────────────────────
+
+def route_after_save_fix(state: AgentState) -> str:
+    if state.get("validation_passed") is True:
+        return "create_pr"
+    return "retry_gate"
+
+def route_after_auto_save_fix(state: AgentState) -> str:
+    if state.get("validation_passed") is True:
+        return "auto_create_pr"
+    return "stop"  # In autopilot, if it fails, we just stop (no retry loop yet)
 
 
 # ── Graph factory ─────────────────────────────────────────────────────────────
@@ -138,6 +161,7 @@ def build_graph(checkpointer=None):
     builder.add_node("auto_validate", validator_node)
     builder.add_node("save_fix",    save_fix_node)
     builder.add_node("auto_save_fix", save_fix_node)
+    builder.add_node("retry_gate",  retry_gate_node)
     builder.add_node("create_pr",   pr_creator_node)
     builder.add_node("auto_create_pr", pr_creator_node)
 
@@ -153,13 +177,20 @@ def build_graph(checkpointer=None):
     builder.add_edge("hitl_gate",  "fix")
     builder.add_edge("fix",        "validate")
     builder.add_edge("validate",   "save_fix")
-    builder.add_edge("save_fix",   "create_pr")
+    builder.add_conditional_edges("save_fix", route_after_save_fix, {
+        "create_pr": "create_pr",
+        "retry_gate": "retry_gate"
+    })
+    builder.add_edge("retry_gate", "fix")  # The loop!
     builder.add_edge("create_pr",  END)
 
     # AUTOPILOT path (runs straight through)
     builder.add_edge("auto_fix",        "auto_validate")
     builder.add_edge("auto_validate",   "auto_save_fix")
-    builder.add_edge("auto_save_fix",   "auto_create_pr")
+    builder.add_conditional_edges("auto_save_fix", route_after_auto_save_fix, {
+        "auto_create_pr": "auto_create_pr",
+        "stop": "stop"
+    })
     builder.add_edge("auto_create_pr",  END)
 
     builder.add_edge("stop", END)
@@ -167,7 +198,7 @@ def build_graph(checkpointer=None):
     if checkpointer:
         return builder.compile(
             checkpointer=checkpointer,
-            interrupt_before=["fix"],   # Only pauses MANUAL path
+            interrupt_before=["fix", "retry_gate"],   # Pauses MANUAL path
         )
     return builder.compile()
 

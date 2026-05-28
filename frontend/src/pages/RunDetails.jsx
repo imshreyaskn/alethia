@@ -192,7 +192,7 @@ export default function RunDetails() {
       await fetch(`${API_BASE_URL}/api/runs/${id}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(action === 'approve' ? { hint } : {})
+        body: JSON.stringify(['approve', 'retry'].includes(action) ? { hint } : {})
       })
       fetchRun()
     } catch (e) { console.error(e) }
@@ -204,6 +204,7 @@ export default function RunDetails() {
   }
 
   const isWait = run.status === 'WAITING_FOR_APPROVAL'
+  const isRetry = run.status === 'VALIDATION_FAILED' || run.status === 'FIX_READY'
 
   return (
     <div className="fin">
@@ -298,6 +299,27 @@ export default function RunDetails() {
                   <button className="btn btn-no" onClick={() => act('reject')} disabled={busy}>
                     <XCircle style={{ width: 12, height: 12 }} />
                     Reject
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Retry Gate */}
+          {isRetry && run.validation_passed === false && (
+            <div className="gate" style={{ border: '1px solid rgba(255,100,100,0.2)' }}>
+              <div className="gate-head" style={{ color: 'var(--red)' }}>Validation Failed</div>
+              <div className="gate-body">
+                <p>The generated patch did not pass the test suite. Provide a hint to guide the agent and try again.</p>
+                <textarea className="hint" rows="3" placeholder="e.g. 'Use simple assert instead of unittest.TestCase'" value={hint} onChange={e => setHint(e.target.value)} />
+                <div className="gate-btns">
+                  <button className="btn btn-go" onClick={() => act('retry')} disabled={busy} style={{ background: 'var(--red)' }}>
+                    {busy ? <Loader style={{ width: 12, height: 12, animation: 'blink 1s ease-in-out infinite' }} /> : <CheckCircle style={{ width: 12, height: 12 }} />}
+                    Retry Patch
+                  </button>
+                  <button className="btn btn-no" onClick={() => act('reject')} disabled={busy}>
+                    <XCircle style={{ width: 12, height: 12 }} />
+                    Cancel
                   </button>
                 </div>
               </div>
