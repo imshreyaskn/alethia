@@ -2,9 +2,7 @@
   <img src="./frontend/public/mesh.png" alt="Alethia Logo" width="250" />
 
   <h1>Alethia</h1>
-
-  <p><b>AI-assisted CI failure repair</b></p>
-
+  
   <p>
     A GitHub App that analyzes pytest failures, generates targeted test patches,
     validates them, and opens a Pull Request.
