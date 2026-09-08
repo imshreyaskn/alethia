@@ -1,99 +1,336 @@
-﻿<p align="center">
-  <img src="frontend/src/assets/mesh.png" width="120" alt="Alethia Logo" />
-  <h1 align="center">Alethia</h1>
-</p>
+<div align="center">
+  <img src="./frontend/public/mesh.png" alt="Alethia Logo" width="250" />
 
-<p align="center">
-  <strong>A self-healing CI/CD GitHub App that classifies test failures, generates patches, and opens Pull Requests — with a human-in-the-loop approval gate.</strong><br>
-  <a href="https://alethia-gamma.vercel.app/">Live Application</a>
-</p>
+  <h1>Alethia</h1>
 
----
+  <p><b>AI-assisted CI failure repair</b></p>
+
+  <p>
+    A GitHub App that analyzes pytest failures, generates targeted test patches,
+    validates them, and opens a Pull Request.
+  </p>
+
+  <br />
+
+  <a href="https://alethia-gamma.vercel.app/">
+    <img src="https://img.shields.io/badge/Live_Application-alethia--gamma.vercel.app-blue?style=for-the-badge&color=CBA0A6" alt="Live Application" />
+  </a>
+
+  <br />
+</div>
 
 ## Overview
 
-When a CI run fails, developers typically read the error, diagnose the root cause, edit the test or source, and push a fix. If the failure is a **test mismatch** — the application changed intentionally and the test assertion is now outdated — Alethia automates that entire loop.
+When a CI run fails, fixing it usually means reading the traceback, finding the relevant test and source code, figuring out what changed, updating the test, and running it again.
 
-A GitHub Actions workflow posts the pytest failure log to Alethia's webhook. A LangGraph workflow classifies the failure, pauses for human approval, generates a surgical patch using libCST, runs the tests to validate the patch, and opens a Pull Request if they pass. The developer reviews and merges.
+Alethia automates that loop for a specific kind of failure: **test mismatches caused by intentional application changes**.
 
-The problem it solves is real but narrow: it handles `TEST_MISMATCH` failures (outdated test assertions after intentional application changes). It stops immediately for `APP_BUG`, `ENV_CONFIG`, `FLAKY`, and `UNCLASSIFIABLE` categories — it does not attempt fixes that require application-level reasoning.
+A GitHub Actions failure is sent to Alethia, where a LangGraph workflow:
+
+1. Parses the pytest failure.
+2. Fetches the relevant test and source files.
+3. Classifies the failure with an LLM.
+4. Waits for developer approval when running in manual mode.
+5. Generates a targeted patch.
+6. Runs the patched test in a temporary environment.
+7. Opens a Pull Request if validation succeeds.
+
+Alethia does not try to fix every CI failure. If the failure looks like an application bug, environment problem, flaky test, or something it cannot classify confidently, the workflow stops instead.
 
 ---
 
 ## How It Works
 
-```text
-GitHub CI fails
-  --> GitHub Actions posts pytest log to POST /api/webhook/github
-    --> log_parser extracts test file, function, line, and assertion error
-      --> pipeline_run record created in Supabase (status: CLASSIFYING)
-        --> LangGraph graph starts in background thread
+```mermaid
+flowchart TD
+    A["GitHub Actions<br/>pytest failure"]
+    B["Webhook"]
+    C["Parse failure"]
+    D["Fetch test + source context"]
+    E["Classify failure"]
 
-              fetch_files node
-                 fetches test file + source file via GitHub App API (AST import resolution)
-              |
-              v
-              classify node
-                 sends assertion error + file contents to Groq (llama-3.3-70b-versatile)
-                 returns: TEST_MISMATCH | APP_BUG | ENV_CONFIG | FLAKY | UNCLASSIFIABLE
+    A --> B
+    B --> C
+    C --> D
+    D --> E
 
-    +-- if NOT TEST_MISMATCH ---------------------------------------------------+
-    |   stop node --> status: STOPPED --> graph ends                            |
-    +---------------------------------------------------------------------------+
+    E -->|TEST_MISMATCH| F{"Execution Mode"}
+    E -->|APP_BUG| X["Stop"]
+    E -->|ENV_CONFIG| X
+    E -->|FLAKY| X
+    E -->|UNCLASSIFIABLE| X
 
-    +-- if TEST_MISMATCH + MANUAL mode -----------------------------------------+
-    |   hitl_gate node --> status: WAITING_FOR_APPROVAL                         |
-    |   graph pauses (LangGraph checkpoint persisted in PostgreSQL)             |
-    |                                                                           |
-    |   Developer reads classification + AI reasoning on dashboard              |
-    |   Developer optionally types a hint ("Use mock for the HTTP client")      |
-    |   Developer clicks Approve                                                |
-    |                                                                           |
-    |   POST /api/runs/{id}/approve --> graph resumes from checkpoint           |
-    +---------------------------------------------------------------------------+
+    F -->|MANUAL| G["Human Approval"]
+    F -->|AUTOPILOT| H["Generate Patch"]
 
-    +-- if TEST_MISMATCH + AUTOPILOT mode --------------------------------------+
-    |   graph routes directly to fix node -- no pause                           |
-    +---------------------------------------------------------------------------+
+    G -->|Approve + optional hint| H
+    G -->|Reject| X
 
-              fix node (fixer.py)
-                 parses test file with libCST (FunctionFinder deep visitor)
-                 extracts only failing function + module context (imports, fixtures)
-                 asks Groq to return ONLY the corrected function definition
-                 uses libCST CSTTransformer to replace only that function body
-                 falls back to full-file rewrite if libCST parsing fails
-                 computes unified diff
-              |
-              v
-              validate node (validator.py)
-                 downloads repo zipball from GitHub API into ephemeral workspace
-                 scrubs backend secrets from test process environment
-                 runs: pytest {test_path} -v --tb=short (60s timeout)
-              |
-              v
-              save_fix node
-                 status: VALIDATED (if passed) or VALIDATION_FAILED (if failed)
+    H --> I["Apply libCST patch"]
+    I --> J["Validate with pytest"]
 
-    +-- if VALIDATION_FAILED + MANUAL mode -------------------------------------+
-    |   retry_gate --> graph pauses again (max 2 attempts enforced)             |
-    |   Developer provides new hint and clicks Retry Patch                      |
-    |   POST /api/runs/{id}/retry --> graph resumes from retry_gate checkpoint  |
-    |   fix --> validate loop repeats                                           |
-    +---------------------------------------------------------------------------+
+    J -->|Pass| K["Create fix branch"]
+    K --> L["Commit patch"]
+    L --> M["Open Pull Request"]
 
-    +-- if VALIDATION_FAILED + AUTOPILOT mode OR retry_count >= 2 --------------+
-    |   stop node --> status: STOPPED (MAX_RETRIES_EXCEEDED) --> graph ends     |
-    +---------------------------------------------------------------------------+
-
-    +-- if VALIDATED -----------------------------------------------------------+
-    |   create_pr node                                                          |
-    |     fetches original PR head branch                                       |
-    |     creates fix branch: realive/fix-{run_id[:8]}-{short_id}              |
-    |     commits patched file: fix(tests): update {path} [realive]             |
-    |     opens Pull Request targeting original feature branch                  |
-    |     status: DELIVERED                                                     |
-    +---------------------------------------------------------------------------+
+    J -->|Fail| N{"Retry available?"}
+    N -->|Yes| O["Developer provides hint"]
+    O --> H
+    N -->|No| X
 ```
+
+---
+
+## Failure Classification
+
+Alethia intentionally narrows the scope of automated repair.
+
+| Classification   | Behaviour                    |
+| ---------------- | ---------------------------- |
+| `TEST_MISMATCH`  | Continue to patch generation |
+| `APP_BUG`        | Stop                         |
+| `ENV_CONFIG`     | Stop                         |
+| `FLAKY`          | Stop                         |
+| `UNCLASSIFIABLE` | Stop                         |
+
+For example, if an application intentionally changes from returning `200` to `201`, and an existing test still expects `200`, Alethia can identify the outdated assertion as a test mismatch.
+
+If the application itself appears to be broken, Alethia does not blindly modify the test to make CI green.
+
+---
+
+## The Repair Workflow
+
+The repair process is implemented as a stateful LangGraph workflow.
+
+```mermaid
+flowchart LR
+    START((START)) --> Fetch["fetch_files"]
+    Fetch --> Classify["classify"]
+
+    Classify -->|TEST_MISMATCH| Mode{"Mode"}
+    Classify -->|Other / uncertain| Stop["stop"]
+
+    Mode -->|MANUAL| HITL["hitl_gate"]
+    Mode -->|AUTOPILOT| Fix["fix"]
+
+    HITL -->|Approved| Fix
+    HITL -->|Rejected| Stop
+
+    Fix --> Validate["validate"]
+    Validate --> Save["save_fix"]
+
+    Save -->|Validated| PR["create_pr"]
+    Save -->|Validation failed| Retry["retry_gate"]
+
+    Retry -->|Retry| Fix
+    Retry -->|Stop| Stop
+
+    PR --> END((END))
+    Stop --> END
+```
+
+The graph is checkpointed so it can pause at the human approval and retry points and resume later.
+
+---
+
+## AI Classification
+
+The classifier uses Groq with `llama-3.3-70b-versatile`.
+
+The model receives the pytest failure along with relevant repository context and returns a structured classification.
+
+The workflow does not simply ask:
+
+> "How do I fix this?"
+
+Instead, the first question is whether the failure should be fixed automatically at all.
+
+That distinction is important because changing a test to hide an actual application bug would make the system worse, not better.
+
+---
+
+## Source Resolution
+
+Before classification, Alethia tries to give the model the relevant code instead of relying only on the traceback.
+
+The failing test is parsed using Python's built-in `ast` module to discover imported application modules.
+
+The resulting context can include:
+
+```text
+pytest failure
+     +
+failing test
+     +
+relevant application source
+     ↓
+failure classification
+```
+
+This keeps the model focused on the code involved in the failure rather than the entire repository.
+
+---
+
+## Surgical Test Patching
+
+The patching stage is where Alethia differs from a simple "LLM writes a file" approach.
+
+Instead of asking the model to rewrite the entire test file, Alethia uses **libCST** to locate the failing function.
+
+```mermaid
+flowchart TD
+    A["Failing test file"]
+    B["Parse with libCST"]
+    C["Find failing function"]
+    D["Extract function + module context"]
+    E["Groq"]
+    F["Corrected function"]
+    G["CST Transformer"]
+    H["Patched test file"]
+    I["Unified diff"]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+```
+
+The generated response is expected to contain the corrected function rather than a rewritten test file.
+
+Alethia then uses a CST transformer to replace the relevant function while leaving unrelated parts of the file untouched.
+
+This makes the resulting diff smaller and easier to review.
+
+If CST parsing fails, the implementation has a full-file rewrite fallback.
+
+---
+
+## Validation
+
+A generated patch is not immediately pushed to GitHub.
+
+Alethia downloads the repository into a temporary workspace, creates a temporary virtual environment, installs the required dependencies, and runs the relevant pytest test.
+
+```mermaid
+flowchart TD
+    A["Generated patch"]
+    B["Temporary workspace"]
+    C["Create virtual environment"]
+    D["Install dependencies"]
+    E["Remove sensitive backend environment variables"]
+    F["Run pytest"]
+    G{"Validation result"}
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+
+    G -->|PASS| H["Patch accepted"]
+    G -->|FAIL| I["Validation failed"]
+```
+
+Validation has a 60-second timeout.
+
+Sensitive backend environment variables such as keys, tokens, secrets, and the database URL are removed from the test process environment.
+
+The temporary workspace is cleaned up after execution.
+
+---
+
+## Human-in-the-Loop
+
+Alethia has two execution modes.
+
+### Manual
+
+The graph pauses after a `TEST_MISMATCH` classification.
+
+The developer can:
+
+* Review the failure
+* Review the AI classification
+* Read the model's reasoning
+* Provide an optional hint
+* Approve the patch
+* Reject the repair
+
+The graph then resumes from its checkpoint.
+
+### Autopilot
+
+The workflow proceeds directly from classification to patch generation without the approval pause.
+
+---
+
+## Retry Flow
+
+If a generated patch fails validation, manual mode can retry the repair with additional developer guidance.
+
+```mermaid
+stateDiagram-v2
+    [*] --> CLASSIFYING
+
+    CLASSIFYING --> WAITING_FOR_APPROVAL: TEST_MISMATCH + MANUAL
+    CLASSIFYING --> FIXING: TEST_MISMATCH + AUTOPILOT
+
+    CLASSIFYING --> STOPPED: Other classification
+
+    WAITING_FOR_APPROVAL --> FIXING: Approved
+    WAITING_FOR_APPROVAL --> STOPPED: Rejected
+
+    FIXING --> VALIDATING
+
+    VALIDATING --> VALIDATED: Tests pass
+    VALIDATING --> VALIDATION_FAILED: Tests fail
+
+    VALIDATION_FAILED --> FIXING: Retry available
+    VALIDATION_FAILED --> STOPPED: Retry limit reached
+
+    VALIDATED --> DELIVERED
+    DELIVERED --> [*]
+    STOPPED --> [*]
+```
+
+The retry ceiling is enforced at two levels so the workflow cannot continue indefinitely.
+
+---
+
+## Pull Request Creation
+
+Once validation succeeds, Alethia creates a dedicated fix branch from the original Pull Request's head branch.
+
+```mermaid
+sequenceDiagram
+    participant CI as GitHub Actions
+    participant A as Alethia
+    participant G as GitHub API
+    participant D as Developer
+
+    CI->>A: pytest failure webhook
+    A->>G: Fetch test + source files
+    G-->>A: Repository context
+
+    A->>A: Classify failure
+    A->>A: Generate patch
+    A->>A: Validate patch
+
+    A->>G: Create fix branch
+    A->>G: Commit patched test
+    A->>G: Open Pull Request
+
+    G-->>D: Pull Request available
+    D->>G: Review and merge
+```
+
+The Pull Request contains the generated change and the failure diagnosis so the developer can review the result in the normal GitHub workflow.
 
 ---
 
@@ -101,130 +338,196 @@ GitHub CI fails
 
 ```mermaid
 flowchart TD
-    subgraph GitHub
-        GHA["GitHub Actions\nCI workflow"]
-        GHAPI["GitHub REST API\n(files, branches, PRs)"]
+
+    subgraph GitHub["GitHub"]
+        Actions["GitHub Actions"]
+        API["GitHub REST API"]
+        PR["Pull Request"]
     end
 
-    subgraph Frontend["Frontend — Vercel"]
-        LP["Landing Page\n(GitHub OAuth: read:user)"]
-        DB["Dashboard\n(Supabase Realtime + API)"]
-        RD["Run Details\n(Approve / Reject / Retry / Delete)"]
+    subgraph Frontend["Frontend"]
+        Landing["Landing Page"]
+        Dashboard["Dashboard"]
+        Details["Run Details"]
     end
 
-    subgraph Backend["Backend — Render (FastAPI)"]
-        WH["POST /api/webhook/github\n(HMAC-SHA256 verified)"]
-        RA["GET|POST|DELETE /api/runs/*\n(JWT-authenticated)"]
-        GA["POST /api/github/sync-installations"]
-        GHAS["github/auth.py\nJWT -> cached installation token"]
+    subgraph Backend["FastAPI Backend"]
+        Webhook["Webhook Handler"]
+        Runs["Run API"]
+        GitHubAuth["GitHub App Auth"]
+        Auth["Supabase JWT Auth"]
     end
 
-    subgraph LangGraph["LangGraph Workflow"]
-        F["fetch_files\n(AST imports)"]
-        C["classify\n(Groq)"]
-        HG["hitl_gate ⏸"]
-        FX["fix\n(libCST + Groq)"]
-        V["validate\n(ephemeral venv + safe_env)"]
-        SF["save_fix"]
-        RG["retry_gate ⏸\n(max 2 ceiling)"]
-        PR_N["create_pr"]
-        ST["stop"]
+    subgraph Workflow["LangGraph"]
+        Fetch["Fetch Files"]
+        Classify["Classify"]
+        HITL["HITL Gate"]
+        Fix["Generate Patch"]
+        Validate["Validate"]
+        Save["Save Result"]
+        Retry["Retry Gate"]
+        CreatePR["Create PR"]
+        Stop["Stop"]
     end
 
-    subgraph AI["Groq"]
-        LLM["llama-3.3-70b-versatile"]
+    subgraph AI["AI"]
+        Groq["Groq<br/>llama-3.3-70b-versatile"]
     end
 
-    subgraph DB2["Database — Supabase"]
-        PR2["pipeline_runs"]
-        FH["fix_history"]
-        INS["installations"]
-        CKP["checkpoints\n(PostgresSaver)"]
+    subgraph Database["Supabase / PostgreSQL"]
+        RunsDB["pipeline_runs"]
+        History["fix_history"]
+        Installations["installations"]
+        Checkpoints["LangGraph Checkpoints"]
     end
 
-    GHA -->|"POST ci_log + repo + sha"| WH
-    WH -->|invoke graph| LangGraph
-    F --> GHAS --> GHAPI
-    C -->|inference| LLM
-    FX -->|inference| LLM
-    PR_N --> GHAS
-    LangGraph -->|read/write| PR2
-    LangGraph -->|append| FH
-    LangGraph -->|checkpoint| CKP
-    RA -->|resume graph| LangGraph
-    DB -->|Realtime subscription| PR2
-    RD -->|POST approve/retry| RA
-    LP --> GA -->|upsert| INS
-    Frontend -->|Supabase Auth| DB2
+    Actions -->|Failure webhook| Webhook
+    Webhook --> Workflow
+
+    Fetch --> GitHubAuth
+    GitHubAuth --> API
+
+    Classify --> Groq
+    Fix --> Groq
+
+    HITL --> Runs
+    Retry --> Runs
+
+    CreatePR --> GitHubAuth
+    API --> PR
+
+    Workflow --> RunsDB
+    Workflow --> History
+    Workflow --> Checkpoints
+
+    Dashboard --> Runs
+    Details --> Runs
+
+    Auth --> Runs
+    Landing --> Auth
+
+    Runs --> Workflow
+    RunsDB --> Dashboard
 ```
 
 ---
 
-## Key Features
+## Security
 
-**Verified as implemented:**
+Alethia handles GitHub webhooks, repository contents, generated patches, and authentication tokens, so several parts of the workflow are explicitly guarded.
 
-- **Zero-Daemon PaaS Architecture** — Deploys cleanly on **Vercel** (frontend) and **Render** (FastAPI backend) with **Supabase** (PostgreSQL). No complex Docker socket mounts (`/var/run/docker.sock`) or container orchestration required.
-- **HMAC-SHA256 Webhook Verification** — Signature checked against `GITHUB_WEBHOOK_SECRET` before processing; 403 on mismatch.
-- **Optimized Webhook Ingestion** — Synchronous blocking network calls removed from the hot path. Immediate deduplication against active runs or already opened fix PRs.
-- **AST-Based Source Resolution** — Test files are parsed using Python's `ast` standard library to discover real imported source modules, avoiding blind directory guessing.
-- **AI Failure Classification** — Groq `llama-3.3-70b-versatile` classifies each failure with JSON-mode structured output and confidence scores.
-- **LangGraph Stateful Workflow** — Nine-node graph with `interrupt_after=["hitl_gate", "retry_gate"]`. State checkpointed to PostgreSQL via `PostgresSaver` with in-memory fallback.
-- **libCST Deep Function Patching** — Uses `FunctionFinder(cst.CSTVisitor)` to locate and surgically replace only the failing function body at any nesting depth (including inner classes), leaving all other code byte-for-byte identical.
-- **Human-in-the-Loop Approval Gate** — Workflow pauses after classification; developer reviews AI diagnosis, optionally provides a hint, and approves or rejects from the dashboard.
-- **Strict Retry Ceiling** — Prevents infinite retry loops; hard stop enforced at 2 retry attempts across both graph routing and API endpoints.
-- **Ephemeral Test Validation with Secret Scrubbing** — Tests run in disposable temporary workspaces with a 60-second timeout. Backend secrets (`*_KEY`, `*_SECRET`, `*_TOKEN`, `DATABASE_URL`) are stripped from the test process environment (`safe_env`).
-- **In-Memory Token Caching** — GitHub App installation tokens are cached in-memory with a 55-minute TTL, eliminating 7–10 redundant GitHub auth calls per run.
-- **Automated Pull Request Creation** — Creates a fix branch from the original PR's head branch (not `main`), commits the surgical patch, and opens a PR with the full diagnosis in the body.
-- **Least-Privilege OAuth** — GitHub OAuth requests only `read:user` instead of intrusive `repo` write permissions.
-- **Unified API & Supabase Realtime** — Dashboard and details view query authenticated FastAPI backend endpoints, while Supabase Realtime provides live push updates without polling.
-- **Immutable Audit Log** — Every action (`WEBHOOK_RECEIVED`, `CLASSIFIED`, `APPROVED`, `FIX_GENERATED`, `PR_OPENED`, `STOPPED`) is appended to `fix_history`.
+### Webhook verification
+
+GitHub webhook requests are verified using HMAC-SHA256 before they are processed.
+
+### API authentication
+
+Protected backend endpoints validate Supabase JWTs.
+
+### GitHub App authentication
+
+GitHub repository operations use GitHub App installation authentication.
+
+Installation tokens are cached in memory to avoid repeatedly requesting new tokens during a run.
+
+### Repository access
+
+Repository installations are associated with users in Supabase, with Row-Level Security policies controlling access to stored run data.
+
+### Validation environment
+
+Generated code is executed in a temporary workspace with a restricted environment and a timeout.
+
+This is designed for the specific Python/pytest workflow Alethia supports; it is not intended to be a general-purpose arbitrary-code sandbox.
 
 ---
 
-## Technical Architecture & Design Decisions
+## Audit Trail
 
-### Why Vercel + Render + Ephemeral Subprocess (Path A)?
+Important workflow actions are recorded in `fix_history`.
 
-A common anti-pattern in developer tooling is running Docker-in-Docker on application servers. When building a self-healing CI/CD agent, the initial instinct is often: *"run every test inside a dedicated Docker container."*
+Examples include:
 
-In practice:
-1. **PaaS Incompatibility**: Standard PaaS hosts like Render, Railway, and Heroku do not allow mounting `/var/run/docker.sock` to spawn sibling containers due to multi-tenant security restrictions. Running Docker requires maintaining expensive, self-managed VPS instances (EC2/Hetzner).
-2. **Specialized Tooling**: Alethia is purpose-built for Python `pytest` test suites. Its log parser expects pytest output, and its fixer uses Python Concrete Syntax Trees (`libcst`).
-3. **Defense-in-Depth without Docker**: Instead of heavy container daemons, Alethia validates patches in an ephemeral workspace (`tempfile.mkdtemp`), installs requirements in a transient virtual environment, explicitly scrubs all sensitive server environment variables (`safe_env`), enforces a 60-second execution timeout, and wipes the directory immediately in a `finally` block.
+```text
+WEBHOOK_RECEIVED
+CLASSIFIED
+APPROVED
+FIX_GENERATED
+PR_OPENED
+STOPPED
+```
 
-This achieves fast test execution, zero daemon overhead, and immediate deployability on Render and Vercel.
-
-### libCST Surgical Patching vs. Full-File Rewrite
-
-LLMs that rewrite entire source files introduce syntax noise: reformatted whitespace, renamed variables, dropped comments, and hallucinated imports. libCST operates directly on the Concrete Syntax Tree:
-
-1. Parses the test file into a CST.
-2. Extracts only the failing function body and module imports via `FunctionFinder(cst.CSTVisitor)`.
-3. Sends that narrow snippet to Groq — not the whole file.
-4. Parses the LLM's response and extracts the replacement `FunctionDef`.
-5. Uses `CSTTransformer` to splice only that function body and return annotation.
-
-The fallback (full-file rewrite) activates only if CST parsing fails on malformed files.
+This makes it possible to trace a repair attempt from the original CI failure through its final outcome.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 19, Vite 8, React Router 7, Supabase JS |
-| Styling | Custom CSS (zero framework dependencies) |
-| Backend | FastAPI 0.115, Uvicorn, Python 3.12+ |
-| Configuration | Pydantic Settings |
-| AI Workflow | LangGraph 0.2, LangChain Core |
-| AI Provider | Groq — `llama-3.3-70b-versatile` |
-| Patch Generation | libCST 1.5 (Concrete Syntax Tree) |
-| GitHub Integration | GitHub App (JWT + cached installation tokens), PyGitHub |
-| Database | PostgreSQL via Supabase |
-| Realtime | Supabase Realtime (WebSocket `postgres_changes`) |
-| Checkpointing | LangGraph `PostgresSaver` with in-memory fallback |
-| Deployment | **Vercel** (frontend), **Render** (backend) |
+| Layer               | Technology                       |
+| ------------------- | -------------------------------- |
+| Frontend            | React 19, Vite 8, React Router 7 |
+| Styling             | Custom CSS                       |
+| Backend             | FastAPI, Uvicorn, Python 3.12+   |
+| AI Workflow         | LangGraph, LangChain Core        |
+| LLM                 | Groq — `llama-3.3-70b-versatile` |
+| Code Transformation | libCST                           |
+| Source Analysis     | Python `ast`                     |
+| GitHub Integration  | GitHub App, PyGithub             |
+| Database            | PostgreSQL via Supabase          |
+| Authentication      | Supabase Auth                    |
+| Realtime            | Supabase Realtime                |
+| Checkpointing       | LangGraph PostgresSaver          |
+| Frontend Deployment | Vercel                           |
+| Backend Deployment  | Render                           |
+
+---
+
+## Project Structure
+
+```text
+alethia/
+├── agent/
+│   ├── graph.py
+│   ├── state.py
+│   └── nodes/
+│       ├── fetcher.py
+│       ├── classifier.py
+│       ├── fixer.py
+│       ├── validator.py
+│       ├── pr_creator.py
+│       └── stopper.py
+│
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── webhook.py
+│   │   │   ├── runs.py
+│   │   │   ├── github.py
+│   │   │   └── health.py
+│   │   ├── core/
+│   │   │   ├── auth.py
+│   │   │   ├── config.py
+│   │   │   └── log_parser.py
+│   │   ├── db/
+│   │   │   └── client.py
+│   │   └── github/
+│   │       └── auth.py
+│   ├── migrations/
+│   ├── scripts/
+│   └── tests/
+│
+├── frontend/
+│   └── src/
+│       ├── components/
+│       ├── context/
+│       ├── lib/
+│       ├── pages/
+│       ├── App.jsx
+│       └── main.jsx
+│
+├── pyproject.toml
+└── .env.example
+```
 
 ---
 
@@ -232,26 +535,66 @@ The fallback (full-file rewrite) activates only if CST parsing fails on malforme
 
 ### Prerequisites
 
-- Python 3.12+
-- Node.js 18+
-- A [Supabase](https://supabase.com) project
-- A [GitHub App](https://github.com/settings/apps/new) registered on your account
-- A [Groq](https://console.groq.com) API key (free tier)
+* Python 3.12+
+* Node.js 18+
+* A Supabase project
+* A registered GitHub App
+* A Groq API key
+* ngrok or another public webhook tunnel for local GitHub webhook development
 
-### 1. Clone and Configure
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/imshreyaskn/alethia.git
 cd alethia
-cp .env.example .env
-# Fill in your secrets in .env
 ```
 
-### 2. Database Setup
+### 2. Configure the environment
 
-In your Supabase project SQL Editor, run migrations in order:
+Copy the example environment file:
 
-```sql
+```bash
+cp .env.example .env
+```
+
+Then configure the required backend variables.
+
+#### Backend
+
+```env
+DEBUG=true
+FRONTEND_URL=http://localhost:5173
+
+SUPABASE_URL=
+SUPABASE_SERVICE_KEY=
+DATABASE_URL=
+
+GITHUB_APP_ID=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_WEBHOOK_SECRET=
+
+GROQ_API_KEY=
+GROQ_MODEL=llama-3.3-70b-versatile
+```
+
+#### Frontend
+
+Create `frontend/.env`:
+
+```env
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+VITE_API_URL=http://localhost:8000/api
+VITE_GITHUB_APP_NAME=
+```
+
+Never commit real credentials.
+
+### 3. Set up Supabase
+
+Run the SQL migrations in order:
+
+```text
 backend/migrations/001_core_tables.sql
 backend/migrations/002_add_columns.sql
 backend/migrations/002_enable_rls.sql
@@ -260,121 +603,203 @@ backend/migrations/004_delete_policy.sql
 backend/migrations/005_schema_fixes.sql
 ```
 
-### 3. Start Backend
+### 4. Start the backend
 
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # macOS/Linux
+```
+
+Windows:
+
+```powershell
+.venv\Scripts\activate
+```
+
+macOS/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 pip install -r ../agent/requirements.txt
+```
+
+Then install the project package:
+
+```bash
 cd ..
 pip install -e .
+```
+
+Start FastAPI:
+
+```bash
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 4. Start Frontend
+### 5. Start the frontend
+
+In another terminal:
 
 ```bash
 cd frontend
 npm install
-npm run dev                     # http://localhost:5173
+npm run dev
 ```
 
-### 5. Expose Webhook for Local Development
+The frontend will be available at:
+
+```text
+http://localhost:5173
+```
+
+### 6. Configure the GitHub webhook
+
+For local development, expose the backend:
 
 ```bash
 ngrok http 8000
-# Set your GitHub App webhook URL to: https://<your-ngrok-url>/api/webhook/github
+```
+
+Then configure the GitHub App webhook URL as:
+
+```text
+https://<your-ngrok-domain>/api/webhook/github
 ```
 
 ---
 
 ## Configuration
 
-**Backend (`.env` at repo root)**
+### Backend
 
-| Variable | Description |
-|---|---|
-| `DEBUG` | `true` for local development; `false` in production |
-| `FRONTEND_URL` | URL of your frontend (e.g. `https://alethia-gamma.vercel.app`) |
-| `SUPABASE_URL` | Supabase project URL (`https://xxx.supabase.co`) |
-| `SUPABASE_SERVICE_KEY` | Service role key (full DB access, bypasses RLS) |
-| `DATABASE_URL` | Direct PostgreSQL URI for LangGraph `PostgresSaver` |
-| `GITHUB_APP_ID` | Numeric ID of your registered GitHub App |
-| `GITHUB_APP_PRIVATE_KEY` | RSA PEM private key, newlines escaped as `\n` |
-| `GITHUB_WEBHOOK_SECRET` | Shared secret for HMAC signature verification |
-| `GROQ_API_KEY` | Groq API key (console.groq.com) |
-| `GROQ_MODEL` | Defaults to `llama-3.3-70b-versatile` |
+| Variable                 | Description                                            |
+| ------------------------ | ------------------------------------------------------ |
+| `DEBUG`                  | Development mode                                       |
+| `FRONTEND_URL`           | Frontend origin                                        |
+| `SUPABASE_URL`           | Supabase project URL                                   |
+| `SUPABASE_SERVICE_KEY`   | Backend Supabase service key                           |
+| `DATABASE_URL`           | PostgreSQL connection used for LangGraph checkpointing |
+| `GITHUB_APP_ID`          | GitHub App ID                                          |
+| `GITHUB_APP_PRIVATE_KEY` | GitHub App private key                                 |
+| `GITHUB_WEBHOOK_SECRET`  | Secret used for webhook signature verification         |
+| `GROQ_API_KEY`           | Groq API key                                           |
+| `GROQ_MODEL`             | Groq model identifier                                  |
 
-**Frontend (`frontend/.env`)**
+### Frontend
 
-| Variable | Description |
-|---|---|
-| `VITE_SUPABASE_URL` | Same as `SUPABASE_URL` |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anon key (publicly safe) |
-| `VITE_API_URL` | Backend URL, e.g. `http://localhost:8000/api` |
-| `VITE_GITHUB_APP_NAME` | Your GitHub App slug for install redirection |
+| Variable                 | Description          |
+| ------------------------ | -------------------- |
+| `VITE_SUPABASE_URL`      | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase public key  |
+| `VITE_API_URL`           | Alethia backend URL  |
+| `VITE_GITHUB_APP_NAME`   | GitHub App slug      |
 
 ---
 
-## Project Structure
+## Example
 
-```text
-alethia/
-├── agent/                      # LangGraph workflow & repair nodes
-│   ├── graph.py                # Graph definition, routing, checkpointing
-│   ├── state.py                # AgentState TypedDict
-│   └── nodes/
-│       ├── fetcher.py          # AST import parsing + GitHub file fetching
-│       ├── classifier.py       # Groq inference - failure categorization
-│       ├── fixer.py            # libCST FunctionFinder visitor + Groq patcher
-│       ├── validator.py        # Ephemeral workspace pytest execution
-│       ├── pr_creator.py       # Creates branch, commits patch, opens PR
-│       └── stopper.py          # Marks run STOPPED (records stop reasons)
-│
-├── backend/                    # FastAPI service (Render-ready)
-│   ├── app/
-│   │   ├── main.py             # App entry, scoped CORS, router mounts
-│   │   ├── api/
-│   │   │   ├── webhook.py      # Entry point: HMAC verify, parse, start graph
-│   │   │   ├── runs.py         # HITL approve, retry, reject, delete endpoints
-│   │   │   ├── github.py       # Installation sync endpoint
-│   │   │   └── health.py
-│   │   ├── core/
-│   │   │   ├── auth.py         # FastAPI dependency - Supabase JWT validation
-│   │   │   ├── config.py       # Pydantic Settings
-│   │   │   └── log_parser.py   # Regex parser for pytest --tb=short
-│   │   ├── db/client.py        # Supabase client singleton
-│   │   └── github/auth.py      # Cached GitHub App installation tokens
-│   ├── migrations/             # 001 - 005 SQL migrations
-│   ├── scripts/                # Database checks & maintenance utilities
-│   └── tests/                  # Pytest test suite (unit + regression)
-│
-├── frontend/                   # React 19 SPA (Vercel-ready)
-│   └── src/
-│       ├── App.jsx             # Router, auth guard, navbar
-│       ├── pages/
-│       │   ├── LandingPage.jsx # Least-privilege GitHub OAuth login
-│       │   ├── Dashboard.jsx   # Live run list (Realtime subscription)
-│       │   ├── RunDetails.jsx  # HITL UI, diff minimap, retry gate, delete
-│       │   └── AuthCallback.jsx # Installation sync & routing
-│       └── components/         # StatusBadge, DecryptedText, GlitchLoader
-│
-├── pyproject.toml              # Workspace package configuration
-└── .env.example
+Suppose an application change intentionally modifies an endpoint:
+
+```python
+return {"status": "created"}, 201
 ```
 
+but an existing test still expects:
+
+```python
+assert response.status_code == 200
+```
+
+The CI run fails.
+
+Alethia can process that failure as:
+
+```mermaid
+flowchart LR
+    A["pytest failure"] --> B["Parse assertion"]
+    B --> C["Fetch test + source"]
+    C --> D["Classify"]
+    D --> E["TEST_MISMATCH"]
+    E --> F["Developer approval"]
+    F --> G["Generate corrected test"]
+    G --> H["libCST patch"]
+    H --> I["Run pytest"]
+    I --> J["Create Pull Request"]
+```
+
+The resulting change is still reviewed through GitHub like any other code change.
+
 ---
 
-## Demo
+## Design Decisions
 
-**[https://alethia-gamma.vercel.app/](https://alethia-gamma.vercel.app/)**
+### Narrow repair scope
+
+Alethia currently focuses on test mismatches rather than attempting to repair arbitrary application failures.
+
+This makes the repair problem more constrained and gives the validation stage a clear purpose.
+
+### LangGraph for workflow state
+
+The repair process contains several points where execution needs to pause and resume:
+
+* Human approval
+* Retry after validation failure
+
+LangGraph provides the state and checkpointing needed to model those transitions explicitly.
+
+### libCST instead of full-file generation
+
+A full-file LLM rewrite can introduce unrelated formatting and code changes.
+
+Using libCST allows Alethia to target the failing function and keep the generated diff small.
+
+### Validate before delivery
+
+The LLM's output is treated as a proposed change, not as a trusted result.
+
+The patch has to pass the relevant pytest test before Alethia creates the Pull Request.
 
 ---
 
-## License
+## Current Scope
 
-MIT
+Alethia currently targets:
+
+* Python repositories
+* pytest-based test suites
+* Test assertion mismatches
+* GitHub Actions
+* GitHub App integrations
+* Automated test-function patching
+* Local/ephemeral pytest validation
+* Pull Request delivery
+
+It does not currently attempt to automatically repair:
+
+* Application bugs
+* Infrastructure failures
+* Environment/configuration failures
+* Flaky tests
+* Unclassified failures
+
+---
+
+## Live Application
+
+<a href="https://alethia-gamma.vercel.app/">
+  https://alethia-gamma.vercel.app/
+</a>
+
+---
+
+<p align="center">
+  Built to turn CI failures into reviewable changes.
+</p>
