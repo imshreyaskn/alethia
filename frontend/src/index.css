@@ -60,28 +60,38 @@ body {
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; border: none; cursor: pointer; background: none; color: inherit; }
 
-/* ── Scrollbar: Matched to Theme Accent ────────────────────────────────── */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(183, 180, 174, 0.3) transparent;
+/* ── Scrollbars: Hidden globally, scoped only to map ───────────────────── */
+html, body {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
-::-webkit-scrollbar {
+.diff-minimap {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(183, 180, 174, 0.4) transparent;
+}
+.diff-minimap::-webkit-scrollbar {
   width: 3px;
   height: 3px;
 }
-::-webkit-scrollbar-track {
+.diff-minimap::-webkit-scrollbar-track {
   background: transparent;
 }
-::-webkit-scrollbar-thumb {
-  background: rgba(183, 180, 174, 0.28);
+.diff-minimap::-webkit-scrollbar-thumb {
+  background: rgba(183, 180, 174, 0.35);
   border-radius: 9999px;
   transition: background 0.2s ease;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(183, 180, 174, 0.65);
+.diff-minimap::-webkit-scrollbar-thumb:hover {
+  background: rgba(183, 180, 174, 0.75);
 }
-::-webkit-scrollbar-corner {
+.diff-minimap::-webkit-scrollbar-corner {
   background: transparent;
 }
 

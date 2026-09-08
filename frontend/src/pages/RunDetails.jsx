@@ -73,7 +73,7 @@ function DiffViewer({ diff }) {
         {showMinimap ? 'Hide Map' : 'Map'}
       </button>
 
-      <div style={{
+      <div className="diff-minimap" style={{
         position: 'absolute',
         top: '20px',
         right: showMinimap ? '20px' : '-200px',
@@ -91,7 +91,7 @@ function DiffViewer({ diff }) {
         overflowY: 'auto',
         overflowX: 'hidden',
         scrollbarWidth: 'thin',
-        scrollbarColor: 'rgba(183, 180, 174, 0.3) transparent'
+        scrollbarColor: 'rgba(183, 180, 174, 0.4) transparent'
       }}>
         <svg 
           width="100%" 
