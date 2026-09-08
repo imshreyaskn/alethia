@@ -1,0 +1,13 @@
+.git
+.github
+frontend
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv
+.pytest_cache
+.coverage
+htmlcov
+.DS_Store
