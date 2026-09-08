@@ -11,7 +11,7 @@
   <br />
 
   <a href="https://alethia-gamma.vercel.app/">
-    <img src="https://img.shields.io/badge/Live_Application-alethia--gamma.vercel.app-blue?style=for-the-badge&color=CBA0A6" alt="Live Application" />
+    <img src="https://img.shields.io/badge/Live_Application-alethia--gamma.vercel.app-blue?style=for-the-badge&color=371E1E" alt="Live Application" />
   </a>
 
   <br />
