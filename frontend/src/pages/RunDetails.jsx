@@ -91,7 +91,7 @@ function DiffViewer({ diff }) {
         overflowY: 'auto',
         overflowX: 'hidden',
         scrollbarWidth: 'thin',
-        scrollbarColor: 'rgba(200, 168, 105, 0.65) transparent'
+        scrollbarColor: 'rgba(183, 180, 174, 0.3) transparent'
       }}>
         <svg 
           width="100%" 
