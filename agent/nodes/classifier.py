@@ -80,7 +80,7 @@ def _build_user_prompt(state: AgentState) -> str:
         test_section = f"""
 ## Test File ({fi.get('test_file_path', 'unknown')})
 ```python
-{state['test_file_content'][:3000]}
+{state['test_file_content'][:1500]}
 ```"""
 
     source_section = ""
@@ -88,7 +88,7 @@ def _build_user_prompt(state: AgentState) -> str:
         source_section = f"""
 ## Source File ({fi.get('source_file_path', 'unknown')})
 ```python
-{state['source_file_content'][:3000]}
+{state['source_file_content'][:1500]}
 ```"""
 
     return f"""Classify this CI test failure.

@@ -169,6 +169,23 @@ export default function RunDetails() {
 
   const fetchRun = async () => {
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token && API_BASE_URL) {
+        try {
+          const baseUrl = API_BASE_URL.replace(/\/api$/, '')
+          const res = await fetch(`${baseUrl}/api/runs/${id}`, {
+            headers: { 'Authorization': `Bearer ${session.access_token}` }
+          })
+          if (res.ok) {
+            const data = await res.json()
+            setRun(data)
+            return
+          }
+        } catch (apiErr) {
+          console.warn('Backend API run fetch failed, falling back to direct query:', apiErr)
+        }
+      }
+
       const { data, error } = await supabase
         .from('pipeline_runs')
         .select('*')
@@ -177,7 +194,7 @@ export default function RunDetails() {
         
       if (error) throw error
       if (data) setRun(data)
-    } catch (e) { console.error(e) }
+    } catch (e) { console.error('Failed to fetch run:', e) }
   }
 
   useEffect(() => {
@@ -219,15 +236,29 @@ export default function RunDetails() {
     
     setDeleting(true)
     try {
-      const { error } = await supabase.from('pipeline_runs').delete().eq('id', id)
-      if (error) {
-        console.error('Failed to delete run:', error)
-        alert('Failed to delete run. Ensure you have the correct permissions.')
-      } else {
-        navigate('/')
+      const { data: { session } } = await supabase.auth.getSession()
+      let deleted = false
+      if (session?.access_token && API_BASE_URL) {
+        try {
+          const baseUrl = API_BASE_URL.replace(/\/api$/, '')
+          const res = await fetch(`${baseUrl}/api/runs/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${session.access_token}` }
+          })
+          if (res.ok) deleted = true
+        } catch (apiErr) {
+          console.warn('API delete failed, falling back to direct delete:', apiErr)
+        }
       }
+
+      if (!deleted) {
+        const { error } = await supabase.from('pipeline_runs').delete().eq('id', id)
+        if (error) throw error
+      }
+      navigate('/')
     } catch (e) {
-      console.error(e)
+      console.error('Failed to delete run:', e)
+      alert('Failed to delete run. Ensure you have the correct permissions.')
     } finally {
       setDeleting(false)
     }
@@ -368,20 +399,28 @@ export default function RunDetails() {
           {/* Retry Gate */}
           {isRetry && run.validation_passed === false && (
             <div className="gate">
-              <div className="gate-head" style={{ background: 'var(--t2)' }}>Validation Failed</div>
+              <div className="gate-head" style={{ background: 'var(--t2)' }}>
+                {(run.retry_count || 0) >= 2 ? 'Retry Limit Reached' : 'Validation Failed'}
+              </div>
               <div className="gate-body">
-                <p>The generated patch did not pass the test suite. Provide a hint to guide the agent and try again.</p>
-                <textarea className="hint" rows="3" placeholder="e.g. 'Use simple assert instead of unittest.TestCase'" value={hint} onChange={e => setHint(e.target.value)} />
-                <div className="gate-btns">
-                  <button className="btn btn-go" onClick={() => act('retry')} disabled={busy} style={{ background: 'var(--t2)' }}>
-                    {busy ? <Loader style={{ width: 12, height: 12, animation: 'blink 1s ease-in-out infinite' }} /> : <CheckCircle style={{ width: 12, height: 12 }} />}
-                    Retry Patch
-                  </button>
-                  <button className="btn btn-no" onClick={() => act('reject')} disabled={busy}>
-                    <XCircle style={{ width: 12, height: 12 }} />
-                    Cancel
-                  </button>
-                </div>
+                {(run.retry_count || 0) >= 2 ? (
+                  <p style={{ color: 'var(--t3)' }}>Maximum retry limit (2 attempts) has been reached for this run.</p>
+                ) : (
+                  <>
+                    <p>The generated patch did not pass the test suite. Provide a hint to guide the agent and try again.</p>
+                    <textarea className="hint" rows="3" placeholder="e.g. 'Use simple assert instead of unittest.TestCase'" value={hint} onChange={e => setHint(e.target.value)} />
+                    <div className="gate-btns">
+                      <button className="btn btn-go" onClick={() => act('retry')} disabled={busy} style={{ background: 'var(--t2)' }}>
+                        {busy ? <Loader style={{ width: 12, height: 12, animation: 'blink 1s ease-in-out infinite' }} /> : <CheckCircle style={{ width: 12, height: 12 }} />}
+                        Retry Patch
+                      </button>
+                      <button className="btn btn-no" onClick={() => act('reject')} disabled={busy}>
+                        <XCircle style={{ width: 12, height: 12 }} />
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}

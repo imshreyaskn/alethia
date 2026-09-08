@@ -36,13 +36,19 @@ def _get_private_key() -> str:
     return key.replace("\\n", "\n")
 
 
+import time
+
+_token_cache: dict[str, tuple[str, float]] = {}
+
+
 def get_installation_token(repo_full_name: str) -> str:
     """
     Given a repo like "drizzle-org/realive-test-target", returns a short-lived
     installation access token that can be used to call the GitHub API for that repo.
 
     This is the ONLY function the rest of the backend needs to call.
-    It handles the full JWT → Installation ID → Token flow internally.
+    It handles the full JWT → Installation ID → Token flow internally, with
+    in-memory caching so repeated calls within 1 hour avoid extra round trips.
 
     Args:
         repo_full_name: "owner/repo" format, e.g. "drizzle-org/realive-test-target"
@@ -53,6 +59,12 @@ def get_installation_token(repo_full_name: str) -> str:
     Raises:
         ValueError: if the app is not installed on the given repo.
     """
+    cached = _token_cache.get(repo_full_name)
+    if cached:
+        token_str, expires_at = cached
+        if time.time() < expires_at - 60:
+            return token_str
+
     private_key = _get_private_key()
     app_id = int(settings.GITHUB_APP_ID)
 
@@ -78,6 +90,8 @@ def get_installation_token(repo_full_name: str) -> str:
 
     # Exchange the installation ID for an access token
     token = integration.get_access_token(installation.id)
+    expires_at = token.expires_at.timestamp() if hasattr(token.expires_at, "timestamp") else (time.time() + 3500)
+    _token_cache[repo_full_name] = (token.token, expires_at)
     return token.token
 
 

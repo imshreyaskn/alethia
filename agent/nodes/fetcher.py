@@ -19,8 +19,34 @@ If a file can't be fetched (wrong path guess, private subdirectory, etc.)
 we don't crash — we proceed with None and the classifier does its best
 with whatever context is available.
 """
+import ast
 from langchain_core.runnables import RunnableConfig
 from agent.state import AgentState
+
+
+def _extract_imported_modules(test_code: str) -> list[str]:
+    """Parses test code AST to extract potential source file candidate paths from imports."""
+    try:
+        tree = ast.parse(test_code)
+    except Exception:
+        return []
+
+    paths = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            rel = node.module.replace(".", "/") + ".py"
+            paths.append(rel)
+            if not rel.startswith(("app/", "src/", "lib/")):
+                for prefix in ("app", "src", "lib"):
+                    paths.append(f"{prefix}/{rel}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                rel = alias.name.replace(".", "/") + ".py"
+                paths.append(rel)
+                if not rel.startswith(("app/", "src/", "lib/")):
+                    for prefix in ("app", "src", "lib"):
+                        paths.append(f"{prefix}/{rel}")
+    return paths
 
 
 def _fetch_with_fallback(repo: str, path: str, ref: str, fetch_file_content) -> str | None:
@@ -44,7 +70,7 @@ def fetcher_node(state: AgentState, config: RunnableConfig) -> dict:
     LangGraph node: fetches test + source file content from GitHub.
     Uses the failure_info parsed by the webhook handler to know which
     files to fetch. Falls back to main branch if exact commit not found.
-    Tries multiple candidate source paths (app/, src/, lib/) in order.
+    Tries AST-derived imported modules first, then candidate paths.
     """
     fi     = state.get("failure_info") or {}
     repo   = state["repo_full_name"]
@@ -63,22 +89,26 @@ def fetcher_node(state: AgentState, config: RunnableConfig) -> dict:
             print(f"[fetcher] Could not fetch test file '{test_path}'")
 
     source_path = fi.get("source_file_path")
+    candidates = []
+    if test_content:
+        candidates.extend(_extract_imported_modules(test_content))
     if source_path:
-        # Try the stored path first, then all heuristic candidates
-        candidates = [source_path] + _guess_source_file_candidates(test_path or "")
-        seen = set()
-        for candidate in candidates:
-            if candidate in seen:
-                continue
-            seen.add(candidate)
-            source_content = _fetch_with_fallback(repo, candidate, ref, fetch_file_content)
-            if source_content:
-                print(f"[fetcher] Found source file at '{candidate}'")
-                # Update failure_info with the resolved path
-                fi = {**fi, "source_file_path": candidate}
-                break
-        if not source_content:
-            print(f"[fetcher] Could not fetch source file (tried: {list(seen)})")
+        candidates.append(source_path)
+    candidates.extend(_guess_source_file_candidates(test_path or ""))
+
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        source_content = _fetch_with_fallback(repo, candidate, ref, fetch_file_content)
+        if source_content:
+            print(f"[fetcher] Found source file at '{candidate}'")
+            # Update failure_info with the resolved path
+            fi = {**fi, "source_file_path": candidate}
+            break
+    if not source_content:
+        print(f"[fetcher] Could not fetch source file (tried: {list(seen)})")
 
     return {
         "test_file_content":   test_content,

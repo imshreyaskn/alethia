@@ -131,8 +131,8 @@ def retry_gate_node(state: AgentState, config: RunnableConfig) -> dict:
 def route_after_save_fix(state: AgentState) -> str:
     if state.get("validation_passed") is True:
         return "create_pr"
-    if state.get("mode") == "AUTOPILOT":
-        return "stop"  # In autopilot, if it fails, we stop (no retry loop)
+    if state.get("mode") == "AUTOPILOT" or (state.get("retry_count") or 0) >= 2:
+        return "stop"  # In autopilot or after 2 retry attempts, stop
     return "retry_gate"
 
 
@@ -188,28 +188,34 @@ def build_graph(checkpointer=None):
 
 # ── Singleton with checkpointer ───────────────────────────────────────────────
 
-from app.core.config import settings
-
-if settings.DATABASE_URL and settings.DATABASE_URL.startswith("postgres"):
+def _create_default_checkpointer():
+    db_url = ""
     try:
-        from psycopg_pool import ConnectionPool
-        from langgraph.checkpoint.postgres import PostgresSaver
-        
-        # Ensure sslmode=require for Supabase
-        conninfo = settings.DATABASE_URL
-        if "sslmode" not in conninfo:
-            conninfo += "?sslmode=require" if "?" not in conninfo else "&sslmode=require"
+        from app.core.config import settings
+        db_url = settings.DATABASE_URL
+    except Exception:
+        import os
+        db_url = os.getenv("DATABASE_URL", "")
 
-        _pool = ConnectionPool(conninfo=conninfo)
-        _checkpointer = PostgresSaver(_pool)
-        _checkpointer.setup()  # Creates the 'checkpoints' schema in Postgres
-        print("[graph] Successfully connected to PostgresSaver")
-    except Exception as e:
-        print(f"[graph] Failed to initialize PostgresSaver: {e}. Falling back to MemorySaver.")
-        from langgraph.checkpoint.memory import MemorySaver
-        _checkpointer = MemorySaver()
-else:
+    if db_url and db_url.startswith("postgres"):
+        try:
+            from psycopg_pool import ConnectionPool
+            from langgraph.checkpoint.postgres import PostgresSaver
+
+            conninfo = db_url
+            if "sslmode" not in conninfo:
+                conninfo += "?sslmode=require" if "?" not in conninfo else "&sslmode=require"
+
+            _pool = ConnectionPool(conninfo=conninfo)
+            _checkpointer = PostgresSaver(_pool)
+            _checkpointer.setup()
+            print("[graph] Successfully connected to PostgresSaver")
+            return _checkpointer
+        except Exception as e:
+            print(f"[graph] Failed to initialize PostgresSaver: {e}. Falling back to MemorySaver.")
+
     from langgraph.checkpoint.memory import MemorySaver
-    _checkpointer = MemorySaver()
+    return MemorySaver()
 
-realive_graph = build_graph(checkpointer=_checkpointer)
+
+realive_graph = build_graph(checkpointer=_create_default_checkpointer())

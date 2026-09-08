@@ -57,15 +57,22 @@ class FunctionReplacer(cst.CSTTransformer):
         return updated_node
 
 
+class FunctionFinder(cst.CSTVisitor):
+    def __init__(self, target_name: str):
+        self.target_name = target_name
+        self.found_node: Optional[cst.FunctionDef] = None
+
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+        if node.name.value == self.target_name and self.found_node is None:
+            self.found_node = node
+
+
 def _extract_function_code(module: cst.Module, func_name: str) -> Optional[str]:
-    """Returns the source code of a named function, including class methods."""
-    for node in module.body:
-        if isinstance(node, cst.FunctionDef) and node.name.value == func_name:
-            return module.code_for_node(node)
-        if isinstance(node, cst.ClassDef):
-            for item in node.body.body:
-                if isinstance(item, (cst.FunctionDef,)) and item.name.value == func_name:
-                    return module.code_for_node(item)
+    """Returns the source code of a named function at any nesting depth."""
+    finder = FunctionFinder(func_name)
+    module.visit(finder)
+    if finder.found_node:
+        return module.code_for_node(finder.found_node)
     return None
 
 

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # --- App ---
     APP_NAME: str = "Realive"
     DEBUG: bool = False
+    FRONTEND_URL: str = "https://alethia-gamma.vercel.app"
 
     # --- Supabase (Milestone 1) ---
     SUPABASE_URL: str = ""

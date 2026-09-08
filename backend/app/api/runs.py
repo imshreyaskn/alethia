@@ -179,6 +179,12 @@ async def retry_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser =
             detail=f"Run is in status '{run['status']}' — can only retry VALIDATION_FAILED runs.",
         )
 
+    if (run.get("retry_count") or 0) >= 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Maximum retry limit (2 attempts) has been reached for this run.",
+        )
+
     if run["repo_full_name"] not in user.allowed_repos:
         raise HTTPException(status_code=403, detail="You do not have access to this run")
 
@@ -222,4 +228,21 @@ def reject_run(run_id: str, user: AuthenticatedUser = Depends(get_current_user))
     }).execute()
 
     return {"run_id": run_id, "status": "REJECTED"}
+
+
+# ── DELETE /api/runs/{run_id} ─────────────────────────────────────────────────
+@router.delete("/runs/{run_id}", tags=["Runs"])
+def delete_run(run_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    """Deletes a pipeline run and its associated history."""
+    result = db.table("pipeline_runs").select("id, repo_full_name").eq("id", run_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    run = result.data[0]
+    if run["repo_full_name"] not in user.allowed_repos:
+        raise HTTPException(status_code=403, detail="You do not have access to this run")
+
+    db.table("pipeline_runs").delete().eq("id", run_id).execute()
+    return {"message": "Run deleted", "id": run_id}
+
 

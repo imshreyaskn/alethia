@@ -33,12 +33,17 @@ app = FastAPI(
 )
 
 # --- CORS Middleware ---
-# For the MVP, we are allowing all origins ("*") so you don't get blocked
-# by Vercel's dynamic preview URLs.
+allowed_origins = ["*"] if settings.DEBUG else [
+    settings.FRONTEND_URL,
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app" if not settings.DEBUG else None,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

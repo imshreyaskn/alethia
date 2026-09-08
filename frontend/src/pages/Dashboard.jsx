@@ -71,6 +71,24 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchRuns = async () => {
       try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.access_token && API_BASE_URL) {
+          try {
+            const baseUrl = API_BASE_URL.replace(/\/api$/, '')
+            const res = await fetch(`${baseUrl}/api/runs`, {
+              headers: { 'Authorization': `Bearer ${session.access_token}` }
+            })
+            if (res.ok) {
+              const json = await res.json()
+              setRuns(json.runs || [])
+              setLoading(false)
+              return
+            }
+          } catch (apiErr) {
+            console.warn('Backend API runs fetch failed, falling back to direct query:', apiErr)
+          }
+        }
+
         const { data, error } = await supabase
           .from('pipeline_runs')
           .select('id, repo_full_name, pr_number, commit_sha, status, failure_category, classification_reason, created_at')
@@ -79,7 +97,7 @@ export default function Dashboard() {
         
         if (error) throw error
         if (data) setRuns(data)
-      } catch (e) { console.error(e) }
+      } catch (e) { console.error('Failed to fetch runs:', e) }
       finally { setLoading(false) }
     }
     fetchRuns()

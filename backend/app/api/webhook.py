@@ -222,21 +222,10 @@ async def receive_github_webhook(
                         existing_run_id = run["id"]
                         break
                     elif status == "DELIVERED" and run.get("pr_url"):
-                        # We already created a PR for this exact failure! Is it still open?
-                        try:
-                            pr_url = run.get("pr_url")
-                            if "/pull/" in pr_url:
-                                pr_num = int(pr_url.split("/pull/")[-1].split("/")[0]) # Extract PR number cleanly
-                                gh = get_github_client(payload.repository)
-                                repo_obj = gh.get_repo(payload.repository)
-                                pr = repo_obj.get_pull(pr_num)
-                                if pr.state == "open":
-                                    print(f"[webhook] Deduplicated: PR #{pr_num} is still open for {failure_info.get('test_function_name')}.")
-                                    existing_run_id = run["id"]
-                                    break
-                        except Exception as e:
-                            print(f"[webhook] Failed to check PR status for deduplication: {e}")
-                            pass
+                        # A PR was already opened for this exact failure signature
+                        print(f"[webhook] Deduplicated: PR already exists for {failure_info.get('test_function_name')} ({run.get('pr_url')}).")
+                        existing_run_id = run["id"]
+                        break
                             
         if existing_run_id:
             created_runs.append({

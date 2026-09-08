@@ -2,32 +2,22 @@
 validator.py — LangGraph Validator Node
 
 WHAT THIS NODE DOES:
-After the fixer generates a patched test file, we don't just trust it.
-We prove it works by actually running the tests inside a Docker container.
+After the fixer generates a patched test file, we validate the fix by running
+pytest against the patched file in a temporary workspace directory.
 
 THE PROCESS:
-  1. Write the patched test file (and test file content) to a temp workspace
-  2. Fetch the repo's requirements.txt via GitHub API (no full clone)
-  3. Spin up the realive-runner Docker container with:
-       - No network access
-       - Read-only workspace volume
-       - 512MB memory cap
-       - 60-second timeout
-  4. Parse the exit code — 0 = pass, anything else = fail
-  5. Clean up temp directory
-
-WHY DOCKER INSTEAD OF subprocess:
-  - subprocess runs AI-generated code directly on the host — a security risk
-  - Docker provides full isolation: no network, no filesystem write access,
-    memory-bounded, killed on timeout, ephemeral
-  - Required for multi-tenant SaaS where multiple orgs run code
-
-BUILD THE RUNNER IMAGE ONCE:
-  docker build -t realive-runner:python ./runner
+  1. Write the patched test file into the extracted workspace
+  2. Run pytest with a 60-second timeout
+  3. Parse the exit code — 0 = pass, anything else = fail
+  4. Always clean up the temporary directory in finally
 """
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
+from typing import Optional
+
 from langchain_core.runnables import RunnableConfig
 from agent.state import AgentState
 
@@ -121,25 +111,37 @@ def validator_node(state: AgentState, config: RunnableConfig) -> dict:
             with open(req_path, "w", encoding="utf-8") as f:
                 f.write(req_content)
 
-        # ── Step 3: Run pytest (MVP Subprocess Fallback) ─────────────────────
-        import subprocess
-        
+        # ── Step 3: Run pytest in clean environment ─────────────────────────
+        # Strip backend secrets from the test process environment
+        safe_env = {
+            k: v for k, v in os.environ.items()
+            if not any(sub in k.upper() for sub in ("KEY", "SECRET", "TOKEN", "DATABASE", "PASSWORD", "PRIVATE", "SUPABASE", "GROQ"))
+        }
+        safe_env["PYTHONPATH"] = workspace_dir
+
+        test_cmd = [sys.executable, "-m", "pytest", test_path, "-v", "--tb=short", "--no-header", "-q"]
+
+        # If repo has requirements.txt, isolate dependencies into an ephemeral venv in tmpdir
         if req_content:
-            print("[validator] Installing dependencies via subprocess...")
-            subprocess.run(
-                ["pip", "install", "-r", "requirements.txt", "-q"],
-                cwd=workspace_dir,
-                check=False
-            )
-            
-        print(f"[validator] Running pytest on {test_path} via subprocess")
+            try:
+                venv_dir = os.path.join(tmpdir, ".venv")
+                subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True, capture_output=True, timeout=30)
+                python_bin = os.path.join(venv_dir, "Scripts", "python.exe") if os.name == "nt" else os.path.join(venv_dir, "bin", "python")
+                req_path = os.path.join(workspace_dir, "requirements.txt")
+                subprocess.run([python_bin, "-m", "pip", "install", "-r", req_path, "pytest", "-q"], cwd=workspace_dir, check=False, timeout=60, capture_output=True)
+                test_cmd = [python_bin, "-m", "pytest", test_path, "-v", "--tb=short", "--no-header", "-q"]
+            except Exception as venv_err:
+                print(f"[validator] Ephemeral venv setup skipped ({venv_err}), using primary pytest runner")
+
+        print(f"[validator] Running pytest on {test_path}")
         try:
             result = subprocess.run(
-                ["pytest", test_path, "-v", "--tb=short", "--no-header", "-q"],
+                test_cmd,
                 cwd=workspace_dir,
+                env=safe_env,
                 capture_output=True,
                 text=True,
-                timeout=TIMEOUT_SECONDS
+                timeout=TIMEOUT_SECONDS,
             )
             output = (result.stdout + "\n" + result.stderr).strip()[-2000:]
             

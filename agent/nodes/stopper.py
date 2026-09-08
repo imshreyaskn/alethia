@@ -24,7 +24,15 @@ def stopper_node(state: AgentState, config: RunnableConfig) -> dict:
     category = state.get("failure_category", "UNCLASSIFIABLE")
     reason   = state.get("classification_reason", "No reason provided.")
 
-    stop_reason = f"{category}: {reason}"
+    if state.get("validation_passed") is False:
+        if (state.get("retry_count") or 0) >= 2:
+            stop_reason = f"MAX_RETRIES_EXCEEDED: Validation failed after {state.get('retry_count')} attempts."
+        elif state.get("mode") == "AUTOPILOT":
+            stop_reason = "AUTOPILOT_STOPPED: Validation failed in autopilot mode."
+        else:
+            stop_reason = f"VALIDATION_FAILED: {state.get('validation_error', 'Tests did not pass')[:100]}"
+    else:
+        stop_reason = f"{category}: {reason}"
 
     # Update the pipeline_run record
     db.table("pipeline_runs").update({
