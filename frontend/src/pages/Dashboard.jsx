@@ -101,7 +101,19 @@ export default function Dashboard() {
     : filter === 'Active'    ? runs.filter(r => ['CLASSIFYING', 'FIXING', 'WAITING_FOR_APPROVAL'].includes(r.status))
     : runs.filter(r => r.status === 'DELIVERED')
 
-  if (loading) return <div className="empty" style={{ height: '60vh' }}><GlitchLoader length={20} speed={40} /></div>
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: 'calc(100vh - 140px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+      }}>
+        <GlitchLoader length={5} speed={60} />
+      </div>
+    )
+  }
 
   return (
     <div className="fin page-container">

@@ -5,6 +5,7 @@ import RunDetails from './pages/RunDetails'
 import LandingPage from './pages/LandingPage'
 import AuthCallback from './pages/AuthCallback'
 import meshImg from './assets/mesh.png'
+import GlitchLoader from './components/GlitchLoader'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
 
@@ -50,10 +51,7 @@ function AppRoutes() {
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: 'var(--bg-0)' }}>
-        <div className="sts pulse" style={{ width: 'auto', padding: '8px 16px', fontSize: '12px' }}>
-          <div className="dot"></div>
-          Loading Alethia...
-        </div>
+        <GlitchLoader length={5} speed={60} />
       </div>
     )
   }

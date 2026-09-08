@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
-const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%&*<>/\\|{}[]()~';
+const CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-export default function GlitchLoader({ length = 12, speed = 50, className = '' }) {
-  const [text, setText] = useState('');
+export default function GlitchLoader({ length = 5, speed = 60, className = '', style = {} }) {
+  const [text, setText] = useState(() => {
+    let initial = '';
+    for (let i = 0; i < length; i++) {
+      initial += CHARS[Math.floor(Math.random() * CHARS.length)];
+    }
+    return initial;
+  });
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -22,10 +28,14 @@ export default function GlitchLoader({ length = 12, speed = 50, className = '' }
       className={className}
       style={{ 
         fontFamily: 'var(--mono)', 
-        fontSize: '11px',
-        color: 'var(--t2)', 
-        letterSpacing: '0.1em',
-        textShadow: '1px 0px 0px rgba(255,0,0,0.5), -1px 0px 0px rgba(0,255,255,0.5)'
+        fontSize: '10px',
+        fontWeight: 500,
+        color: 'var(--t3)', 
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        fontVariantNumeric: 'tabular-nums',
+        userSelect: 'none',
+        ...style,
       }}
     >
       {text}

@@ -89,7 +89,9 @@ function DiffViewer({ diff }) {
         padding: '12px 4px',
         transition: 'right 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         overflowY: 'auto',
-        overflowX: 'hidden'
+        overflowX: 'hidden',
+        scrollbarWidth: 'thin',
+        scrollbarColor: 'rgba(200, 168, 105, 0.65) transparent'
       }}>
         <svg 
           width="100%" 
@@ -232,7 +234,17 @@ export default function RunDetails() {
   }
 
   if (!run) {
-    return <div className="empty" style={{ height: '60vh' }}><GlitchLoader length={30} speed={30} /></div>
+    return (
+      <div style={{
+        minHeight: 'calc(100vh - 140px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+      }}>
+        <GlitchLoader length={5} speed={60} />
+      </div>
+    )
   }
 
   const isWait = run.status === 'WAITING_FOR_APPROVAL'
