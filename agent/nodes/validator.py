@@ -28,16 +28,9 @@ BUILD THE RUNNER IMAGE ONCE:
 import os
 import shutil
 import tempfile
-from typing import Optional
-
-import docker
-from docker.errors import DockerException, ImageNotFound
-
 from langchain_core.runnables import RunnableConfig
 from agent.state import AgentState
 
-RUNNER_IMAGE = "realive-runner:python"
-MEMORY_LIMIT = "512m"
 TIMEOUT_SECONDS = 60
 
 
@@ -169,16 +162,6 @@ def validator_node(state: AgentState, config: RunnableConfig) -> dict:
                 "validation_passed": False,
                 "validation_error": f"Validation timed out after {TIMEOUT_SECONDS}s.",
             }
-
-    except docker.errors.ContainerError as exc:
-        # ContainerError is raised when the container exits with non-zero
-        output = exc.stderr.decode("utf-8", errors="replace").strip()[-2000:] if exc.stderr else str(exc)
-        print(f"[validator] Tests FAILED")
-        print(output[-300:])
-        return {
-            "validation_passed": False,
-            "validation_error": output,
-        }
 
     except Exception as exc:
         error = str(exc)

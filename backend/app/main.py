@@ -14,9 +14,6 @@ HOW TO RUN:
   - 'app'      = the FastAPI() instance variable name
   - '--reload' = auto-restart on file changes (dev only)
 """
-import sys
-import os
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -53,7 +50,3 @@ app.include_router(health_router,  prefix="/api")
 app.include_router(github_router,  prefix="/api")
 app.include_router(webhook_router, prefix="/api")
 app.include_router(runs_router,    prefix="/api")
-
-# Future routers (added in later milestones):
-# app.include_router(webhook_router, prefix="/api")
-# app.include_router(runs_router, prefix="/api")

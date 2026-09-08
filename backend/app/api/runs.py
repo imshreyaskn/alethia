@@ -95,6 +95,12 @@ async def approve_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser
         "details": {"hint": body.hint},
     }).execute()
 
+    asyncio.create_task(_resume_pipeline_graph(run, body.hint, is_retry=False))
+    return {"run_id": run_id, "status": "FIXING", "message": "Fixer started."}
+
+
+async def _resume_pipeline_graph(run: dict, hint: Optional[str], is_retry: bool = False):
+    run_id = run["id"]
     graph_config = {
         "configurable": {
             "thread_id": run_id,
@@ -106,54 +112,53 @@ async def approve_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser
             "groq_client": groq_client,
         }
     }
+    try:
+        from agent.graph import realive_graph
 
-    async def run_fixer():
+        # If MemorySaver lost the state on restart, reconstruct it from DB
+        current_state = realive_graph.get_state(graph_config)
+        if not current_state.values.get("repo_full_name"):
+            print(f"[runs] Checkpoint missing for {run_id}. Reconstructing state from DB...")
+            db_state = {
+                "run_id": run_id,
+                "repo_full_name": run["repo_full_name"],
+                "pr_number": run["pr_number"],
+                "commit_sha": run["commit_sha"],
+                "raw_ci_log": "",
+                "mode": run.get("mode", "MANUAL"),
+                "failure_info": run.get("failure_info"),
+                "failure_category": run.get("failure_category"),
+                "classification_reason": run.get("classification_reason"),
+                "stop_reason": None,
+                "test_file_content": run.get("test_file_content"),
+                "source_file_content": run.get("source_file_content"),
+                "user_hint": hint,
+                "patched_test_file": run.get("patched_test_file"),
+                "patch_diff": run.get("patch_diff"),
+                "validation_passed": run.get("validation_passed"),
+                "validation_error": run.get("validation_error"),
+                "pr_url": run.get("pr_url"),
+                "retry_count": 1 if is_retry else (run.get("retry_count", 0) or 0),
+            }
+            await run_in_threadpool(realive_graph.update_state, graph_config, db_state)
+        else:
+            state_update = {"user_hint": hint}
+            if is_retry:
+                current_retry = current_state.values.get("retry_count", 0) or 0
+                state_update["retry_count"] = current_retry + 1
+            await run_in_threadpool(realive_graph.update_state, graph_config, state_update)
+
+        await run_in_threadpool(realive_graph.invoke, None, graph_config)
+    except Exception as exc:
+        action_msg = " during retry" if is_retry else ""
+        print(f"[runs] Fixer crashed{action_msg} for run {run_id}: {exc}")
         try:
-            from agent.graph import realive_graph, get_checkpointer
-            checkpointer = get_checkpointer()
-
-            # If MemorySaver lost the state on restart, reconstruct it from DB
-            current_state = realive_graph.get_state(graph_config)
-            if not current_state.values.get("repo_full_name"):
-                print(f"[runs] Checkpoint missing for {run_id}. Reconstructing state from DB...")
-                db_state = {
-                    "run_id": run_id,
-                    "repo_full_name": run["repo_full_name"],
-                    "pr_number": run["pr_number"],
-                    "commit_sha": run["commit_sha"],
-                    "raw_ci_log": "",
-                    "mode": run.get("mode", "MANUAL"),
-                    "failure_info": run.get("failure_info"),
-                    "failure_category": run.get("failure_category"),
-                    "classification_reason": run.get("classification_reason"),
-                    "stop_reason": None,
-                    "test_file_content": run.get("test_file_content"),
-                    "source_file_content": run.get("source_file_content"),
-                    "user_hint": body.hint,
-                    "patched_test_file": run.get("patched_test_file"),
-                    "patch_diff": run.get("patch_diff"),
-                    "validation_passed": run.get("validation_passed"),
-                    "validation_error": run.get("validation_error"),
-                    "pr_url": run.get("pr_url"),
-                    "retry_count": run.get("retry_count", 0) or 0
-                }
-                await run_in_threadpool(realive_graph.update_state, graph_config, db_state)
-            else:
-                await run_in_threadpool(realive_graph.update_state, graph_config, {"user_hint": body.hint})
-            # invoke(None, config) resumes from checkpoint — no state dict needed
-            await run_in_threadpool(realive_graph.invoke, None, graph_config)
-        except Exception as exc:
-            print(f"[runs] Fixer crashed for run {run_id}: {exc}")
-            try:
-                db.table("pipeline_runs").update({
-                    "status": "FAILED",
-                    "validation_error": f"Fixer error: {str(exc)[:300]}",
-                }).eq("id", run_id).execute()
-            except Exception:
-                pass
-
-    asyncio.create_task(run_fixer())
-    return {"run_id": run_id, "status": "FIXING", "message": "Fixer started."}
+            db.table("pipeline_runs").update({
+                "status": "FAILED",
+                "validation_error": f"Fixer error{action_msg}: {str(exc)[:300]}",
+            }).eq("id", run_id).execute()
+        except Exception:
+            pass
 
 
 # ── POST /api/runs/{run_id}/retry ──────────────────────────────────────────────
@@ -192,65 +197,7 @@ async def retry_run(run_id: str, body: ApproveRequest, user: AuthenticatedUser =
         "details": {"hint": body.hint},
     }).execute()
 
-    graph_config = {
-        "configurable": {
-            "thread_id": run_id,
-            "db": db,
-            "settings": settings,
-            "get_github_client": get_github_client,
-            "fetch_file_content": fetch_file_content,
-            "_guess_source_file_candidates": _guess_source_file_candidates,
-            "groq_client": groq_client,
-        }
-    }
-
-    async def run_fixer():
-        try:
-            from agent.graph import realive_graph, get_checkpointer
-            checkpointer = get_checkpointer()
-
-            # If MemorySaver lost the state on restart, reconstruct it from DB
-            current_state = realive_graph.get_state(graph_config)
-            if not current_state.values.get("repo_full_name"):
-                print(f"[runs] Checkpoint missing for {run_id}. Reconstructing state from DB...")
-                db_state = {
-                    "run_id": run_id,
-                    "repo_full_name": run["repo_full_name"],
-                    "pr_number": run["pr_number"],
-                    "commit_sha": run["commit_sha"],
-                    "raw_ci_log": "",
-                    "mode": run.get("mode", "MANUAL"),
-                    "failure_info": run.get("failure_info"),
-                    "failure_category": run.get("failure_category"),
-                    "classification_reason": run.get("classification_reason"),
-                    "stop_reason": None,
-                    "test_file_content": run.get("test_file_content"),
-                    "source_file_content": run.get("source_file_content"),
-                    "user_hint": body.hint,
-                    "patched_test_file": run.get("patched_test_file"),
-                    "patch_diff": run.get("patch_diff"),
-                    "validation_passed": run.get("validation_passed"),
-                    "validation_error": run.get("validation_error"),
-                    "pr_url": run.get("pr_url"),
-                    "retry_count": 1
-                }
-                await run_in_threadpool(realive_graph.update_state, graph_config, db_state)
-            else:
-                current_retry = current_state.values.get("retry_count", 0) or 0
-                await run_in_threadpool(realive_graph.update_state, graph_config, {"user_hint": body.hint, "retry_count": current_retry + 1})
-            # invoke(None, config) resumes from checkpoint
-            await run_in_threadpool(realive_graph.invoke, None, graph_config)
-        except Exception as exc:
-            print(f"[runs] Fixer crashed during retry for run {run_id}: {exc}")
-            try:
-                db.table("pipeline_runs").update({
-                    "status": "FAILED",
-                    "validation_error": f"Fixer error on retry: {str(exc)[:300]}",
-                }).eq("id", run_id).execute()
-            except Exception:
-                pass
-
-    asyncio.create_task(run_fixer())
+    asyncio.create_task(_resume_pipeline_graph(run, body.hint, is_retry=True))
     return {"run_id": run_id, "status": "FIXING", "message": "Retry started."}
 
 

@@ -15,8 +15,6 @@ supabase==2.9.1           # Supabase Python client
 
 # --- GitHub API — Milestone 2 ---
 PyGithub==2.4.0           # GitHub REST API client
-PyJWT==2.9.0              # JWT generation for GitHub App auth
-cryptography==43.0.3      # Required by PyJWT for RSA key signing
 
 
 

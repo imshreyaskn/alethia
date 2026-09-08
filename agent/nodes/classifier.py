@@ -21,7 +21,6 @@ CATEGORIES:
   FLAKY            — Timing/order-dependent failure. ❌
   UNCLASSIFIABLE   — Not enough info to decide. ❌
 """
-import json
 import time
 from typing import Literal
 

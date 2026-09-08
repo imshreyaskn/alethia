@@ -48,8 +48,8 @@ def route_after_classify(state: AgentState) -> str:
     if category != "TEST_MISMATCH":
         return "stop"
     if mode == "AUTOPILOT":
-        return "auto_fix"   # bypasses interrupt_before=["fix"]
-    return "hitl_gate"      # MANUAL: pauses before "fix"
+        return "fix"        # Runs straight through without pausing
+    return "hitl_gate"      # MANUAL: pauses after hitl_gate
 
 
 # ── HITL Gate node ────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ def route_after_classify(state: AgentState) -> str:
 def hitl_gate_node(state: AgentState, config: RunnableConfig) -> dict:
     """
     Updates DB to WAITING_FOR_APPROVAL, persists file content so the
-    dashboard can display context. The graph then pauses (interrupt_before=["fix"]).
+    dashboard can display context. The graph then pauses (interrupt_after=["hitl_gate"]).
     No state reconstruction needed — LangGraph checkpointer holds everything.
     """
     db = config["configurable"]["db"]
@@ -120,7 +120,7 @@ def save_fix_node(state: AgentState, config: RunnableConfig) -> dict:
 
 def retry_gate_node(state: AgentState, config: RunnableConfig) -> dict:
     """
-    Graph pauses here after validation fails (interrupt_before=["retry_gate"]).
+    Graph pauses here after validation fails (interrupt_after=["retry_gate"]).
     Developer can provide a new hint and click Retry.
     """
     return {"run_id": state["run_id"]}
@@ -131,23 +131,18 @@ def retry_gate_node(state: AgentState, config: RunnableConfig) -> dict:
 def route_after_save_fix(state: AgentState) -> str:
     if state.get("validation_passed") is True:
         return "create_pr"
+    if state.get("mode") == "AUTOPILOT":
+        return "stop"  # In autopilot, if it fails, we stop (no retry loop)
     return "retry_gate"
-
-def route_after_auto_save_fix(state: AgentState) -> str:
-    if state.get("validation_passed") is True:
-        return "auto_create_pr"
-    return "stop"  # In autopilot, if it fails, we just stop (no retry loop yet)
 
 
 # ── Graph factory ─────────────────────────────────────────────────────────────
 
 def build_graph(checkpointer=None):
     """
-    Builds the unified LangGraph with two fix paths:
-      - hitl_gate → [interrupt] → fix   (MANUAL mode)
-      - auto_fix                          (AUTOPILOT mode, same function, different node name)
-
-    interrupt_before=["fix"] only pauses the MANUAL path.
+    Builds the unified LangGraph.
+    MANUAL mode routes through hitl_gate and pauses before fix.
+    AUTOPILOT mode routes directly to fix without pausing.
     """
     builder = StateGraph(AgentState)
 
@@ -155,44 +150,32 @@ def build_graph(checkpointer=None):
     builder.add_node("classify",    classifier_node)
     builder.add_node("stop",        stopper_node)
     builder.add_node("hitl_gate",   hitl_gate_node)
-    builder.add_node("fix",         fixer_node)         # MANUAL: paused before this
-    builder.add_node("auto_fix",    fixer_node)         # AUTOPILOT: no pause
+    builder.add_node("fix",         fixer_node)
     builder.add_node("validate",    validator_node)
-    builder.add_node("auto_validate", validator_node)
     builder.add_node("save_fix",    save_fix_node)
-    builder.add_node("auto_save_fix", save_fix_node)
     builder.add_node("retry_gate",  retry_gate_node)
     builder.add_node("create_pr",   pr_creator_node)
-    builder.add_node("auto_create_pr", pr_creator_node)
 
     builder.set_entry_point("fetch_files")
     builder.add_edge("fetch_files", "classify")
     builder.add_conditional_edges(
         "classify",
         route_after_classify,
-        {"stop": "stop", "hitl_gate": "hitl_gate", "auto_fix": "auto_fix"},
+        {"stop": "stop", "hitl_gate": "hitl_gate", "fix": "fix"},
     )
 
-    # MANUAL path (pauses before "fix" via interrupt_before)
+    # Both HITL gate and retry loop lead into fix
     builder.add_edge("hitl_gate",  "fix")
+    builder.add_edge("retry_gate", "fix")
+
     builder.add_edge("fix",        "validate")
     builder.add_edge("validate",   "save_fix")
     builder.add_conditional_edges("save_fix", route_after_save_fix, {
         "create_pr": "create_pr",
-        "retry_gate": "retry_gate"
+        "retry_gate": "retry_gate",
+        "stop": "stop",
     })
-    builder.add_edge("retry_gate", "fix")  # The loop!
     builder.add_edge("create_pr",  END)
-
-    # AUTOPILOT path (runs straight through)
-    builder.add_edge("auto_fix",        "auto_validate")
-    builder.add_edge("auto_validate",   "auto_save_fix")
-    builder.add_conditional_edges("auto_save_fix", route_after_auto_save_fix, {
-        "auto_create_pr": "auto_create_pr",
-        "stop": "stop"
-    })
-    builder.add_edge("auto_create_pr",  END)
-
     builder.add_edge("stop", END)
 
     if checkpointer:
@@ -230,8 +213,3 @@ else:
     _checkpointer = MemorySaver()
 
 realive_graph = build_graph(checkpointer=_checkpointer)
-
-
-def get_checkpointer():
-    """Returns the shared checkpointer instance. Used by the approve endpoint."""
-    return _checkpointer

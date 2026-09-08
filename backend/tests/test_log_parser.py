@@ -74,77 +74,80 @@ class TestParseAssertionError:
     """The primary case: an outdated assertion in a test function."""
 
     def test_extracts_test_file_path(self):
-        result = parse_pytest_output(ASSERTION_ERROR_LOG)
-        assert result is not None
-        assert result.test_file_path == "tests/test_orders.py"
+        results = parse_pytest_output(ASSERTION_ERROR_LOG)
+        assert len(results) == 1
+        assert results[0].test_file_path == "tests/test_orders.py"
 
     def test_extracts_function_name(self):
-        result = parse_pytest_output(ASSERTION_ERROR_LOG)
-        assert result.test_function_name == "test_create_order"
+        results = parse_pytest_output(ASSERTION_ERROR_LOG)
+        assert results[0].test_function_name == "test_create_order"
 
     def test_extracts_line_number(self):
-        result = parse_pytest_output(ASSERTION_ERROR_LOG)
-        assert result.line_number == 15
+        results = parse_pytest_output(ASSERTION_ERROR_LOG)
+        assert results[0].line_number == 15
 
     def test_extracts_assertion_error(self):
-        result = parse_pytest_output(ASSERTION_ERROR_LOG)
-        assert "currency" in result.assertion_error
-        assert "assert set(response.keys())" in result.assertion_error
+        results = parse_pytest_output(ASSERTION_ERROR_LOG)
+        assert "currency" in results[0].assertion_error
+        assert "assert set(response.keys())" in results[0].assertion_error
 
     def test_guesses_source_file(self):
-        result = parse_pytest_output(ASSERTION_ERROR_LOG)
+        results = parse_pytest_output(ASSERTION_ERROR_LOG)
         # "tests/test_orders.py" → "app/orders.py"
-        assert result.source_file_path == "app/orders.py"
+        assert results[0].source_file_path == "app/orders.py"
 
 
 class TestParseMissingField:
     """A test that checks for a field that doesn't exist yet."""
 
     def test_extracts_function_name(self):
-        result = parse_pytest_output(MISSING_FIELD_LOG)
-        assert result.test_function_name == "test_user_profile"
+        results = parse_pytest_output(MISSING_FIELD_LOG)
+        assert len(results) == 1
+        assert results[0].test_function_name == "test_user_profile"
 
     def test_extracts_file_path(self):
-        result = parse_pytest_output(MISSING_FIELD_LOG)
-        assert result.test_file_path == "tests/test_users.py"
+        results = parse_pytest_output(MISSING_FIELD_LOG)
+        assert results[0].test_file_path == "tests/test_users.py"
 
     def test_error_contains_field_name(self):
-        result = parse_pytest_output(MISSING_FIELD_LOG)
-        assert "avatar_url" in result.assertion_error
+        results = parse_pytest_output(MISSING_FIELD_LOG)
+        assert "avatar_url" in results[0].assertion_error
 
 
 class TestParseTypeError:
     """Non-assertion errors — useful for classifier to detect app bugs."""
 
     def test_extracts_function_name(self):
-        result = parse_pytest_output(TYPE_ERROR_LOG)
-        assert result.test_function_name == "test_process_payment"
+        results = parse_pytest_output(TYPE_ERROR_LOG)
+        assert len(results) == 1
+        assert results[0].test_function_name == "test_process_payment"
 
     def test_extracts_error_message(self):
-        result = parse_pytest_output(TYPE_ERROR_LOG)
-        assert "unexpected keyword argument" in result.assertion_error
+        results = parse_pytest_output(TYPE_ERROR_LOG)
+        assert "unexpected keyword argument" in results[0].assertion_error
 
 
 class TestNoFailure:
-    """When all tests pass, parser should return None."""
+    """When all tests pass, parser should return empty list."""
 
-    def test_returns_none_on_all_passed(self):
-        result = parse_pytest_output(NO_FAILURE_LOG)
-        assert result is None
+    def test_returns_empty_list_on_all_passed(self):
+        results = parse_pytest_output(NO_FAILURE_LOG)
+        assert results == []
 
-    def test_returns_none_on_empty_log(self):
-        result = parse_pytest_output(EMPTY_LOG)
-        assert result is None
+    def test_returns_empty_list_on_empty_log(self):
+        results = parse_pytest_output(EMPTY_LOG)
+        assert results == []
 
 
 class TestReturnType:
-    """Parser always returns ParsedFailure or None — never raises."""
+    """Parser always returns list[ParsedFailure] — never raises."""
 
     def test_returns_parsed_failure_instance(self):
-        result = parse_pytest_output(ASSERTION_ERROR_LOG)
-        assert isinstance(result, ParsedFailure)
+        results = parse_pytest_output(ASSERTION_ERROR_LOG)
+        assert len(results) == 1
+        assert isinstance(results[0], ParsedFailure)
 
     def test_never_raises_on_garbage_input(self):
-        # Should silently return None, not crash
-        result = parse_pytest_output("this is not pytest output at all!!!")
-        assert result is None
+        # Should silently return empty list, not crash
+        results = parse_pytest_output("this is not pytest output at all!!!")
+        assert results == []

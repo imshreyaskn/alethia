@@ -18,10 +18,8 @@ ANALOGY:
   JWT = your employee badge (proves who you are)
   Installation token = a temporary access card for a specific floor (scoped access)
 """
-import time
 import base64
 
-import jwt
 from github import Github, GithubIntegration
 
 from app.core.config import settings

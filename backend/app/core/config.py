@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     # --- App ---
     APP_NAME: str = "Realive"
     DEBUG: bool = False
-    ALLOWED_ORIGINS: str = "http://localhost:5173"  # Comma-separated for multiple origins
 
     # --- Supabase (Milestone 1) ---
     SUPABASE_URL: str = ""
@@ -24,10 +23,6 @@ class Settings(BaseSettings):
     GITHUB_APP_ID: str = ""
     GITHUB_APP_PRIVATE_KEY: str = ""        # Full PEM string (newlines as \n)
     GITHUB_WEBHOOK_SECRET: str = ""         # Used to verify webhooks are from GitHub
-
-    # --- Gemini (kept as fallback reference) ---
-    GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
 
     # --- Groq (Milestones 4, 6 — free tier, no billing required) ---
     GROQ_API_KEY: str = ""
