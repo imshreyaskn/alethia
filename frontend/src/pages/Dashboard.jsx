@@ -142,22 +142,6 @@ export default function Dashboard() {
           <StatPill label="Delivered"    value={delivered}  align="left" />
           <StatPill label="Success Rate" value={`${rate}%`} align="left" />
         </div>
-
-        {/* Dashed connector lines stemming from image toward each stat */}
-        <svg
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
-          viewBox="0 0 700 260" preserveAspectRatio="xMidYMid meet"
-        >
-          <line x1="215" y1="78"  x2="315" y2="115" stroke="rgba(183,180,174,0.1)" strokeWidth="1" strokeDasharray="3 7" />
-          <line x1="215" y1="182" x2="315" y2="152" stroke="rgba(183,180,174,0.1)" strokeWidth="1" strokeDasharray="3 7" />
-          <line x1="485" y1="78"  x2="385" y2="115" stroke="rgba(183,180,174,0.1)" strokeWidth="1" strokeDasharray="3 7" />
-          <line x1="485" y1="182" x2="385" y2="152" stroke="rgba(183,180,174,0.1)" strokeWidth="1" strokeDasharray="3 7" />
-          {/* Small terminal dots at stat ends */}
-          <circle cx="215" cy="78"  r="2" fill="rgba(183,180,174,0.2)" />
-          <circle cx="215" cy="182" r="2" fill="rgba(183,180,174,0.2)" />
-          <circle cx="485" cy="78"  r="2" fill="rgba(183,180,174,0.2)" />
-          <circle cx="485" cy="182" r="2" fill="rgba(183,180,174,0.2)" />
-        </svg>
       </div>
 
       {/* ── Pipeline Runs List ─────────────────────────────────────────── */}
